@@ -1,0 +1,70 @@
+name: sitechain
+description: "SiteChain - Şantiye Takip ve Canlı Saha Haritası Uygulaması"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # 🎨 TİPOGRAFİ VE YAZI TİPLERİ
+  google_fonts: ^6.2.1
+
+  # 🌍 ULUSLARARASI DİL DESTEĞİ
+  flutter_localizations:
+    sdk: flutter
+  intl: ^0.20.2
+
+  # ⚙️ TEMEL İKONLAR
+  cupertino_icons: ^1.0.8
+
+  # 🔥 FIREBASE VE VERİTABANI SİSTEMLERİ
+  firebase_core: ^4.12.1
+  firebase_auth: ^6.5.6
+  cloud_firestore: ^6.7.1
+  firebase_storage: ^13.4.5
+  firebase_messaging: ^16.4.3
+
+  # 🛡️ GÜVENLİK, XML VE KML PAKETLERİ
+  encrypt: ^5.0.3
+  xml: ^7.0.1
+  archive: ^4.0.9
+
+  # 📍 HARİTA VE KONUM MOTORLARI (Versiyon Çakışması Çözüldü)
+  google_maps_flutter: ^2.5.3
+  geolocator: ^12.0.0
+  flutter_background_service: ^5.0.5
+
+  # 📁 DOSYA VE MEDYA YÖNETİMİ
+  file_picker: ^8.1.2
+  image_picker: ^1.2.2
+  shared_preferences: ^2.2.2
+  path_provider: ^2.1.1
+
+  # 🚀 QR TARAMA VE TAKVİM
+  mobile_scanner: ^7.3.0
+  table_calendar: ^3.0.9
+
+  # 📊 EXCEL RAPORLAMA VE BAĞLANTILAR
+  syncfusion_flutter_xlsio: any
+  open_filex: ^4.3.2
+  url_launcher: ^6.3.2
+
+  # 🖨️ QR, BİLDİRİM VE PAYLAŞIM
+  qr_flutter: ^4.1.0
+  share_plus: ^10.1.4
+  http: ^1.6.0
+  flutter_svg: ^2.3.0
+  flutter_local_notifications: ^22.0.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  generate: true

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "905121115110",
+    "project_id": "sitechain-36ade",
+    "storage_bucket": "sitechain-36ade.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:905121115110:android:697cf703f32cd3c4570427",
+        "android_client_info": {
+          "package_name": "com.example.sitechain"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBsVlqHmyU-ZkehiYqlA3incOJctS29SpE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
