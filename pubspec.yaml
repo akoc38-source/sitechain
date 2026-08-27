@@ -68,3 +68,8 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   generate: true
+
+  # 🖼️ LOGO VE GÖRSEL YOLU
+  assets:
+    - assets/images/logo.png
+    - assets/icon/app_icon.png

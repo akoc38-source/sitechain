@@ -1,8 +1,8 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:file_picker/file_picker.dart';
-import '../firebase_servis.dart';
 
 class KmlYonetimSayfasi extends StatefulWidget {
   const KmlYonetimSayfasi({super.key});
@@ -13,9 +13,10 @@ class KmlYonetimSayfasi extends StatefulWidget {
 
 class _KmlYonetimSayfasiState extends State<KmlYonetimSayfasi> {
   bool _yukleniyor = false;
-  final FirebaseServis _servis = FirebaseServis();
 
+  // 📂 DOSYA SEÇ VE YÜKLE (KML/KMZ DESTEKLİ)
   Future<void> _dosyaEkle() async {
+    // 🛠️ FilePicker.platform.pickFiles kullanılarak static erişim hatası çözüldü
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['kml', 'kmz'],
@@ -27,13 +28,29 @@ class _KmlYonetimSayfasiState extends State<KmlYonetimSayfasi> {
       try {
         File file = File(result.files.single.path!);
         String fileName = result.files.single.name;
+        String fileExtension = fileName.split('.').last.toLowerCase();
 
-        await _servis.kmlDosyaYukleVeEkle(fileName, file);
+        // 1. Firebase Storage'a yükle
+        String storagePath =
+            'kml_dosyalari/${DateTime.now().millisecondsSinceEpoch}_$fileName';
+        Reference ref = FirebaseStorage.instance.ref().child(storagePath);
+        UploadTask uploadTask = ref.putFile(file);
+        TaskSnapshot snapshot = await uploadTask;
+        String downloadUrl = await snapshot.ref.getDownloadURL();
+
+        // 2. Firestore 'kml_katmanlari' koleksiyonuna kaydet
+        await FirebaseFirestore.instance.collection('kml_katmanlari').add({
+          'ad': fileName,
+          'tip': fileExtension,
+          'url': downloadUrl,
+          'storage_path': storagePath,
+          'yukleme_tarihi': FieldValue.serverTimestamp(),
+        });
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text("🎉 Harita katmanı başarıyla yüklendi!"),
+              content: Text("✅ Katman başarıyla yüklendi!"),
               backgroundColor: Colors.green,
             ),
           );
@@ -42,7 +59,7 @@ class _KmlYonetimSayfasiState extends State<KmlYonetimSayfasi> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text("❌ Yükleme Hatası: $e"),
+              content: Text("⚠️ Yükleme Hatası: $e"),
               backgroundColor: Colors.red,
             ),
           );
@@ -55,29 +72,67 @@ class _KmlYonetimSayfasiState extends State<KmlYonetimSayfasi> {
     }
   }
 
+  // 🗑️ KATMAN VE DOSYA SİLME
+  Future<void> _katmanSil(String docId, String url) async {
+    try {
+      // 1. Firestore kaydını sil
+      await FirebaseFirestore.instance
+          .collection('kml_katmanlari')
+          .doc(docId)
+          .delete();
+
+      // 2. Storage üzerindeki dosyayı sil
+      if (url.isNotEmpty) {
+        try {
+          await FirebaseStorage.instance.refFromURL(url).delete();
+        } catch (e) {
+          debugPrint("Storage dosya silme uyarısı: $e");
+        }
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("🗑️ Katman ve dosya başarıyla silindi."),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("⚠️ Silme Hatası: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF121824),
+      backgroundColor: Colors.grey.shade100,
       appBar: AppBar(
-        title: const Text("KML / KMZ Katman Yönetimi"),
-        backgroundColor: const Color(0xFF1E2638),
+        title: const Text("KML / KMZ YÖNETİMİ"),
+        backgroundColor: Colors.black,
         foregroundColor: Colors.white,
         centerTitle: true,
       ),
       body: StreamBuilder<QuerySnapshot>(
-        stream: _servis.kmlKatmanlariniDinle(),
+        stream:
+            FirebaseFirestore.instance.collection('kml_katmanlari').snapshots(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(
-              child: CircularProgressIndicator(color: Color(0xFFFF9F1C)),
+              child: CircularProgressIndicator(color: Colors.orange),
             );
           }
 
           if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
             return const Center(
               child: Text(
-                "Henüz yüklü bir KML/KMZ katmanı yok.",
+                "Henüz yüklü bir katman yok.",
                 style: TextStyle(
                   color: Colors.grey,
                   fontWeight: FontWeight.bold,
@@ -97,7 +152,6 @@ class _KmlYonetimSayfasiState extends State<KmlYonetimSayfasi> {
               String url = data['url'] ?? "";
 
               return Card(
-                color: const Color(0xFF1E2638),
                 margin: const EdgeInsets.symmetric(horizontal: 15, vertical: 6),
                 elevation: 2,
                 shape: RoundedRectangleBorder(
@@ -105,36 +159,26 @@ class _KmlYonetimSayfasiState extends State<KmlYonetimSayfasi> {
                 ),
                 child: ListTile(
                   leading: const CircleAvatar(
-                    backgroundColor: Color(0xFFFF9F1C),
-                    child: Icon(Icons.layers, color: Colors.black, size: 20),
+                    backgroundColor: Colors.blueAccent,
+                    child: Icon(Icons.layers, color: Colors.white, size: 20),
                   ),
                   title: Text(
                     data['ad'] ?? "İsimsiz Katman",
                     style: const TextStyle(
-                      color: Colors.white,
                       fontWeight: FontWeight.bold,
                       fontSize: 14,
                     ),
                   ),
                   subtitle: Text(
-                    "Tip: ${(data['tip'] ?? 'KML').toString().toUpperCase()}",
-                    style: const TextStyle(color: Colors.grey, fontSize: 12),
+                    "Tip: ${data['tip']?.toString().toUpperCase() ?? 'KML'}",
+                    style: const TextStyle(fontSize: 12),
                   ),
                   trailing: IconButton(
                     icon: const Icon(
                       Icons.delete_forever,
                       color: Colors.redAccent,
                     ),
-                    onPressed: () async {
-                      await _servis.kmlSil(docId, url);
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text("🗑️ Katman ve dosya silindi."),
-                          ),
-                        );
-                      }
-                    },
+                    onPressed: () => _katmanSil(docId, url),
                   ),
                 ),
               );
@@ -143,23 +187,25 @@ class _KmlYonetimSayfasiState extends State<KmlYonetimSayfasi> {
         },
       ),
       floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: const Color(0xFFFF9F1C),
-        foregroundColor: Colors.black,
+        backgroundColor: Colors.orange.shade800,
         onPressed: _yukleniyor ? null : _dosyaEkle,
         label: _yukleniyor
             ? const SizedBox(
                 width: 20,
                 height: 20,
                 child: CircularProgressIndicator(
-                  color: Colors.black,
+                  color: Colors.white,
                   strokeWidth: 2,
                 ),
               )
             : const Text(
                 "YENİ KATMAN EKLE",
-                style: TextStyle(fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
               ),
-        icon: const Icon(Icons.cloud_upload),
+        icon: const Icon(Icons.cloud_upload, color: Colors.white),
       ),
     );
   }

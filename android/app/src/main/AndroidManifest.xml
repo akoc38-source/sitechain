@@ -13,7 +13,7 @@
         <!-- 🗺️ GOOGLE MAPS API ANAHTARI -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"
-            android:value="XsufuiKatzP1VTV85542z9oGDbvyjrH35XI4bGH0juh5gmOq5BgUD4mSb2XDZUL5"/>
+            android:value="AIzaSyAC4PNugwzxJv03kisBln4n79x5uThqAiY"/>
 
         <activity
             android:name=".MainActivity"
