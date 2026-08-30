@@ -1,6 +1,15 @@
+import 'package:excel/excel.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+
+String _getCellValue(List<Data?> row, int index) {
+  if (index >= row.length || row[index] == null || row[index]?.value == null) {
+    return "";
+  }
+  return row[index]!.value.toString().trim();
+}
 
 Widget buildInputField(String label, TextEditingController controller,
     {bool isNumber = false}) {
@@ -238,6 +247,112 @@ void showAddStructureSheet(BuildContext context,
                           fontWeight: FontWeight.bold,
                           color: Color(0xFFFF9F1C))),
                   const SizedBox(height: 16),
+
+                  // 📊 EXCEL İLE TOPLU YÜKLEME BUTONU
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      try {
+                        FilePickerResult? result =
+                            await FilePicker.platform.pickFiles(
+                          type: FileType.custom,
+                          allowedExtensions: ['xlsx', 'xls', 'xlsm', 'csv'],
+                          withData: true,
+                        );
+
+                        if (result != null &&
+                            result.files.isNotEmpty &&
+                            result.files.first.bytes != null) {
+                          final bytes = result.files.first.bytes!;
+                          final excel = Excel.decodeBytes(bytes);
+                          List<dynamic> currentList =
+                              List.from(activeProj["sanatYapitlari"] ?? []);
+                          int addedCount = 0;
+
+                          for (var table in excel.tables.keys) {
+                            final sheet = excel.tables[table];
+                            if (sheet == null || sheet.rows.isEmpty) continue;
+
+                            for (int i = 1; i < sheet.rows.length; i++) {
+                              final row = sheet.rows[i];
+                              if (row.isEmpty) continue;
+
+                              String nameOrType = _getCellValue(row, 0);
+                              String kmVal = _getCellValue(row, 1);
+                              String betonVal =
+                                  row.length > 2 ? _getCellValue(row, 2) : "0";
+
+                              if (nameOrType.isNotEmpty) {
+                                currentList.add({
+                                  "tip": nameOrType,
+                                  "km": kmVal.isEmpty ? "0+000" : kmVal,
+                                  "beton": betonVal.endsWith("m³")
+                                      ? betonVal
+                                      : "$betonVal m³",
+                                  "durum": "Bekliyor",
+                                });
+                                addedCount++;
+                              }
+                            }
+                          }
+
+                          if (addedCount > 0) {
+                            activeProj["sanatYapitlari"] = currentList;
+                            onSave(activeProj);
+                            if (ctx.mounted) {
+                              Navigator.pop(ctx);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                      '🎉 $addedCount adet Sanat Yapısı Excel\'den kütüphaneye yüklendi!'),
+                                  backgroundColor: Colors.green,
+                                ),
+                              );
+                            }
+                          }
+                        }
+                      } catch (e) {
+                        if (ctx.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('❌ Excel Yükleme Hatası: $e'),
+                              backgroundColor: Colors.redAccent,
+                            ),
+                          );
+                        }
+                      }
+                    },
+                    icon: const Icon(Icons.table_chart, color: Colors.white),
+                    label: const Text(
+                      '📊 EXCEL DOSYASI İLE TOPLU YÜKLE',
+                      style:
+                          TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF2EC4B6),
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size(double.infinity, 46),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8)),
+                    ),
+                  ),
+
+                  const SizedBox(height: 12),
+                  const Row(
+                    children: [
+                      Expanded(child: Divider(color: Colors.white24)),
+                      Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 8.0),
+                        child: Text('VEYA MANUEL EKLEYİN',
+                            style: TextStyle(
+                                color: Colors.grey,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold)),
+                      ),
+                      Expanded(child: Divider(color: Colors.white24)),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+
                   const Text('Yapı Tipi Seçin:',
                       style: TextStyle(color: Colors.grey, fontSize: 12)),
                   const SizedBox(height: 6),

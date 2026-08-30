@@ -1,217 +1,204 @@
 // lib/services/excel_parser_service.dart
 
-import 'dart:convert';
-import 'package:archive/archive.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:excel/excel.dart';
 import 'package:flutter/foundation.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:xml/xml.dart';
-import '../utils/line_calculator.dart';
 
 class ExcelParserService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  Future<int> parseAndSaveExcelBytes({
-    required List<int> bytes,
+  /// 📊 1. GENEL EXCEL METRAJ OKUMA VE HAT OLUŞTURMA
+  Future<int> parseAndSaveExcel({
+    required Uint8List bytes,
     required String projectId,
   }) async {
-    int totalStructuresSaved = 0;
-
-    var linesSnap = await _firestore
-        .collection('projects')
-        .doc(projectId)
-        .collection('lines')
-        .get();
-
-    if (linesSnap.docs.isEmpty) {
-      debugPrint("❌ Veritabanında KML hattı bulunamadı.");
-      return 0;
-    }
-
-    Map<String, List<LatLng>> lineGeometries = {};
-    for (var doc in linesSnap.docs) {
-      var data = doc.data();
-      String code = data['code'] ?? doc.id;
-      List<dynamic> rawCoords = data['coordinates'] ?? [];
-      List<LatLng> pts = [];
-
-      for (var c in rawCoords) {
-        if (c is Map && c.containsKey('lat') && c.containsKey('lng')) {
-          double? lat = double.tryParse(c['lat'].toString());
-          double? lng = double.tryParse(c['lng'].toString());
-          if (lat != null && lng != null) pts.add(LatLng(lat, lng));
-        }
-      }
-      if (pts.isNotEmpty) {
-        lineGeometries[code.toUpperCase()] = pts;
-        lineGeometries[doc.id.toUpperCase()] = pts;
-      }
-    }
-
     try {
-      final archive = ZipDecoder().decodeBytes(bytes);
+      final excel = Excel.decodeBytes(bytes);
+      int totalCount = 0;
 
-      List<String> sharedStrings = [];
-      ArchiveFile? sstFile;
-      for (var file in archive) {
-        if (file.name.toLowerCase().contains('sharedstrings.xml')) {
-          sstFile = file;
-          break;
-        }
-      }
+      for (var table in excel.tables.keys) {
+        final sheet = excel.tables[table];
+        if (sheet == null || sheet.rows.isEmpty) continue;
 
-      if (sstFile != null) {
-        String sstXmlStr =
-            utf8.decode(sstFile.content as List<int>, allowMalformed: true);
-        final sstDoc = XmlDocument.parse(sstXmlStr);
-        for (var si in sstDoc.descendants
-            .whereType<XmlElement>()
-            .where((e) => e.name.local.toLowerCase() == 'si')) {
-          String text = si.descendants
-              .whereType<XmlElement>()
-              .where((e) => e.name.local.toLowerCase() == 't')
-              .map((e) => e.innerText)
-              .join();
-          sharedStrings.add(text);
-        }
-      }
+        for (int i = 1; i < sheet.rows.length; i++) {
+          final row = sheet.rows[i];
+          if (row.isEmpty) continue;
 
-      for (var file in archive) {
-        if (file.name.toLowerCase().contains('xl/worksheets/sheet') &&
-            file.name.toLowerCase().endsWith('.xml')) {
-          String sheetXmlStr =
-              utf8.decode(file.content as List<int>, allowMalformed: true);
-          final sheetDoc = XmlDocument.parse(sheetXmlStr);
+          String code = _getCellValue(row, 0);
+          String name = _getCellValue(row, 1);
+          double totalKm = _parseDoubleValue(row, 2);
+          String pipeType = _getCellValue(row, 3);
+          double startKm = _parseDoubleValue(row, 4);
 
-          Map<String, List<Map<String, dynamic>>> lineToStructures = {};
+          if (code.isNotEmpty) {
+            String docId = code.replaceAll(' ', '_').replaceAll('/', '-');
 
-          final rows = sheetDoc.descendants
-              .whereType<XmlElement>()
-              .where((e) => e.name.local.toLowerCase() == 'row');
+            Map<String, dynamic> lineData = {
+              'id': docId,
+              'code': code,
+              'name': name.isEmpty ? code : name,
+              'totalKm': totalKm,
+              'startKm': startKm,
+              'pipeType': pipeType.isEmpty ? 'PE100' : pipeType,
+              'kaziKm': startKm,
+              'yataklamaKm': startKm,
+              'montajKm': startKm,
+              'kapamaKm': startKm,
+              'sanatYapitlari': [],
+              'createdAt': FieldValue.serverTimestamp(),
+              'updatedAt': FieldValue.serverTimestamp(),
+            };
 
-          for (var row in rows) {
-            Map<String, String> rowCells = {};
+            await _firestore
+                .collection('projects')
+                .doc(projectId)
+                .collection('lines')
+                .doc(docId)
+                .set(lineData, SetOptions(merge: true));
 
-            final cells = row.descendants
-                .whereType<XmlElement>()
-                .where((e) => e.name.local.toLowerCase() == 'c');
-
-            for (var c in cells) {
-              String? ref = c.getAttribute('r');
-              if (ref == null) continue;
-
-              String colLetters = RegExp(r'[A-Za-z]+')
-                      .firstMatch(ref)
-                      ?.group(0)
-                      ?.toUpperCase() ??
-                  '';
-              if (colLetters.isEmpty) continue;
-
-              String type = c.getAttribute('t') ?? '';
-              String cellVal = '';
-
-              if (type == 's') {
-                final vNode = c.descendants
-                    .whereType<XmlElement>()
-                    .where((e) => e.name.local.toLowerCase() == 'v')
-                    .firstOrNull;
-                if (vNode != null) {
-                  int? idx = int.tryParse(vNode.innerText.trim());
-                  if (idx != null && idx >= 0 && idx < sharedStrings.length) {
-                    cellVal = sharedStrings[idx];
-                  }
-                }
-              } else if (type == 'inlineStr') {
-                final tNode = c.descendants
-                    .whereType<XmlElement>()
-                    .where((e) => e.name.local.toLowerCase() == 't')
-                    .firstOrNull;
-                if (tNode != null) cellVal = tNode.innerText;
-              } else {
-                final vNode = c.descendants
-                    .whereType<XmlElement>()
-                    .where((e) => e.name.local.toLowerCase() == 'v')
-                    .firstOrNull;
-                if (vNode != null) cellVal = vNode.innerText;
-              }
-
-              rowCells[colLetters] = cellVal.trim();
-            }
-
-            String rawLineName = rowCells['A'] ?? '';
-            String rawKm = rowCells['B'] ?? '';
-            String rawName = rowCells['C'] ?? '';
-            String rawType = rowCells['D'] ?? '';
-            String rawFeature = rowCells['E'] ?? '';
-            String rawDiameter = rowCells['F'] ?? '';
-
-            if (rawKm.contains('+') ||
-                RegExp(r'^\d+(\.\d+)?$').hasMatch(rawKm)) {
-              String normalizedLineCode = _normalizeLineCode(rawLineName);
-              List<LatLng>? baseLinePoints =
-                  lineGeometries[normalizedLineCode.toUpperCase()];
-              baseLinePoints ??= lineGeometries['S2'];
-
-              if (baseLinePoints != null && baseLinePoints.isNotEmpty) {
-                double meters = LineCalculator.parseKmToMeters(rawKm);
-                LatLng? interpolatedPoint =
-                    LineCalculator.getPointAtDistance(baseLinePoints, meters);
-
-                if (interpolatedPoint != null) {
-                  Map<String, dynamic> structureData = {
-                    'name': rawName.isNotEmpty ? rawName : rawType,
-                    'km': rawKm,
-                    'type': rawType.isNotEmpty ? rawType : 'Sanat Yapısı',
-                    'feature': rawFeature,
-                    'diameter': rawDiameter,
-                    'status': 'Bekliyor',
-                    'lat': interpolatedPoint.latitude,
-                    'lng': interpolatedPoint.longitude,
-                    'targetLine': normalizedLineCode,
-                  };
-
-                  lineToStructures.putIfAbsent(normalizedLineCode, () => []);
-                  lineToStructures[normalizedLineCode]!.add(structureData);
-                  totalStructuresSaved++;
-                }
-              }
-            }
-          }
-
-          if (lineToStructures.isNotEmpty) {
-            WriteBatch batch = _firestore.batch();
-            for (var entry in lineToStructures.entries) {
-              String lineCode = entry.key;
-              var lineDocRef = _firestore
-                  .collection('projects')
-                  .doc(projectId)
-                  .collection('lines')
-                  .doc(lineCode.replaceAll(RegExp(r'[^\w\-]'), '_'));
-
-              // 🔑 MEVCUT YAPILARI SİLMEDEN ÜZERİNE EKLEMEK İÇİN arrayUnion VE merge
-              batch.set(
-                  lineDocRef,
-                  {
-                    'code': lineCode,
-                    'sanatYapitlari': FieldValue.arrayUnion(entry.value),
-                  },
-                  SetOptions(merge: true));
-            }
-            await batch.commit();
+            totalCount++;
           }
         }
       }
-
-      return totalStructuresSaved;
+      return totalCount;
     } catch (e) {
-      debugPrint("Excel okuma hatası: $e");
-      return 0;
+      debugPrint("Excel Metraj Okuma Hatası: $e");
+      rethrow;
     }
   }
 
-  String _normalizeLineCode(String rawText) {
-    RegExp regExp = RegExp(r'S\d+(?:-\d+)*', caseSensitive: false);
-    Match? match = regExp.firstMatch(rawText);
-    return match != null ? match.group(0)!.toUpperCase() : 'S2';
+  /// 🏗️ 2. SANAT YAPILARI VE BRANŞMANLARI EXCEL'DEN YÜKLEME
+  Future<int> parseAndSaveExcelBytes({
+    required Uint8List bytes,
+    required String projectId,
+  }) async {
+    try {
+      final excel = Excel.decodeBytes(bytes);
+      int addedCount = 0;
+
+      for (var table in excel.tables.keys) {
+        final sheet = excel.tables[table];
+        if (sheet == null || sheet.rows.isEmpty) continue;
+
+        for (int i = 1; i < sheet.rows.length; i++) {
+          final row = sheet.rows[i];
+          if (row.isEmpty || row.length < 3) continue;
+
+          String lineCode = _getCellValue(row, 0); // Hat Kodu (Örn: S2-1)
+          String kmStr = _getCellValue(row, 1); // Metraj (Örn: 0+120.00)
+          String structureName = _getCellValue(row, 2); // Yapı Adı (Örn: SAV-1)
+          String structureType =
+              row.length > 3 ? _getCellValue(row, 3) : "Yapı"; // Tür
+          String feature =
+              row.length > 4 ? _getCellValue(row, 4) : ""; // Özellik
+          String diameter = row.length > 5 ? _getCellValue(row, 5) : ""; // Çap
+
+          if (lineCode.isEmpty || structureName.isEmpty) continue;
+
+          // Projedeki ilgili Hat Kodu ile eşleşen hattı ara
+          final linesSnapshot = await _firestore
+              .collection('projects')
+              .doc(projectId)
+              .collection('lines')
+              .where('code', isEqualTo: lineCode)
+              .limit(1)
+              .get();
+
+          if (linesSnapshot.docs.isNotEmpty) {
+            final lineDoc = linesSnapshot.docs.first;
+
+            Map<String, dynamic> newStructure = {
+              'id': "${DateTime.now().millisecondsSinceEpoch}_$i",
+              'name': structureName,
+              'km': kmStr.isEmpty ? "0+000" : kmStr,
+              'type': structureType.isEmpty ? "Yapı" : structureType,
+              'feature': feature,
+              'diameter': diameter,
+              'status': 'Bekliyor',
+              'createdAt': DateTime.now().toIso8601String(),
+            };
+
+            await lineDoc.reference.update({
+              'sanatYapitlari': FieldValue.arrayUnion([newStructure]),
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+
+            addedCount++;
+          }
+        }
+      }
+      return addedCount;
+    } catch (e) {
+      debugPrint("Sanat Yapıları Excel Okuma Hatası: $e");
+      rethrow;
+    }
+  }
+
+  /// 📐 3. EXCEL HAKEDİŞ / İLERLEME METRAJI GÜNCELLEME
+  Future<int> parseAndUpdateProgressExcel({
+    required Uint8List bytes,
+    required String projectId,
+  }) async {
+    try {
+      final excel = Excel.decodeBytes(bytes);
+      int updatedCount = 0;
+
+      for (var table in excel.tables.keys) {
+        final sheet = excel.tables[table];
+        if (sheet == null || sheet.rows.isEmpty) continue;
+
+        for (int i = 1; i < sheet.rows.length; i++) {
+          final row = sheet.rows[i];
+          if (row.isEmpty) continue;
+
+          String code = _getCellValue(row, 0);
+          double kazi = _parseDoubleValue(row, 1);
+          double yataklama = _parseDoubleValue(row, 2);
+          double montaj = _parseDoubleValue(row, 3);
+          double kapama = _parseDoubleValue(row, 4);
+
+          if (code.isNotEmpty) {
+            String docId = code.replaceAll(' ', '_').replaceAll('/', '-');
+
+            await _firestore
+                .collection('projects')
+                .doc(projectId)
+                .collection('lines')
+                .doc(docId)
+                .update({
+              'kaziKm': kazi,
+              'yataklamaKm': yataklama,
+              'montajKm': montaj,
+              'kapamaKm': kapama,
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+
+            updatedCount++;
+          }
+        }
+      }
+      return updatedCount;
+    } catch (e) {
+      debugPrint("İlerleme Excel Okuma Hatası: $e");
+      rethrow;
+    }
+  }
+
+  /// 🔍 YARDIMCI METOT: Hücre değerini güvenli şekilde String'e dönüştürür
+  String _getCellValue(List<Data?> row, int index) {
+    if (index >= row.length ||
+        row[index] == null ||
+        row[index]?.value == null) {
+      return "";
+    }
+    return row[index]!.value.toString().trim();
+  }
+
+  /// 🔢 YARDIMCI METOT: Hücre değerini güvenli şekilde double tipe dönüştürür
+  double _parseDoubleValue(List<Data?> row, int index) {
+    String val = _getCellValue(row, index);
+    if (val.isEmpty) return 0.0;
+    val = val.replaceAll(',', '.');
+    return double.tryParse(val) ?? 0.0;
   }
 }

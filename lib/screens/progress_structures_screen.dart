@@ -27,11 +27,10 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
   final ExcelParserService _excelService = ExcelParserService();
 
   String? _selectedLineId;
-  String _searchQuery = "";
   bool _isUploading = false;
   String _uploadStatusText = "";
 
-  // 📂 Cihazdan KML Dosyası Seçip Veritabanına Yükleme Metodu
+  // 📂 KML Dosyası Yükleme
   Future<void> _pickAndUploadKml() async {
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
@@ -43,14 +42,10 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
       if (result != null && result.files.single.bytes != null) {
         setState(() {
           _isUploading = true;
-          _uploadStatusText =
-              "KML Dosyası Ayrıştırılıyor ve Şebeke Oluşturuluyor...";
+          _uploadStatusText = "KML Dosyası Ayrıştırılıyor...";
         });
 
-        // KML dosya içeriğini UTF-8 metin olarak okuma
         String kmlContent = utf8.decode(result.files.single.bytes!);
-
-        // Parser servisini çalıştırıp Firestore'a kaydetme
         int savedCount = await _kmlService.parseAndSaveKml(
           kmlContent: kmlContent,
           projectId: widget.activeProjectId,
@@ -59,8 +54,7 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(
-                  "🎉 $savedCount adet şebeke hattı ve sanat yapıları başarıyla aktarıldı!"),
+              content: Text("🎉 $savedCount adet hat aktarıldı!"),
               backgroundColor: Colors.green,
             ),
           );
@@ -70,73 +64,289 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("❌ KML Ayrıştırma Hatası: $e"),
-            backgroundColor: Colors.redAccent,
-          ),
+              content: Text("❌ KML Hatası: $e"),
+              backgroundColor: Colors.redAccent),
         );
       }
     } finally {
-      if (mounted) {
-        setState(() => _isUploading = false);
-      }
+      if (mounted) setState(() => _isUploading = false);
     }
   }
 
-  // 📊 Cihazdan Excel Dosyası Seçip Yapıları Aktarma Metodu
+  // 📊 Excel Dosyasından Toplu Sanat Yapıları Yükleme
   Future<void> _pickAndUploadExcel() async {
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['xlsx', 'xls', 'xlsm', 'csv'],
-        allowMultiple: true,
         withData: true,
       );
 
       if (result != null && result.files.isNotEmpty) {
         setState(() {
           _isUploading = true;
-          _uploadStatusText =
-              "${result.files.length} Adet Excel Ayrıştırılıyor ve Yapılar Ekleniyor...";
+          _uploadStatusText = "Excel Dosyası Ayrıştırılıyor...";
         });
 
-        int totalSavedCount = 0;
-        for (var file in result.files) {
-          if (file.bytes != null) {
-            int count = await _excelService.parseAndSaveExcelBytes(
-              bytes: file.bytes!,
-              projectId: widget.activeProjectId,
-            );
-            totalSavedCount += count;
-          }
-        }
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                  "🎉 Toplam $totalSavedCount adet sanat yapısı / branşman başarıyla eklendi!"),
-              backgroundColor: Colors.green,
-            ),
+        var file = result.files.first;
+        if (file.bytes != null) {
+          int count = await _excelService.parseAndSaveExcelBytes(
+            bytes: file.bytes!,
+            projectId: widget.activeProjectId,
           );
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                    "🎉 Toplam $count adet Sanat Yapısı / Branşman eklendi!"),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
         }
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("❌ Excel Yükleme Hatası: $e"),
-            backgroundColor: Colors.redAccent,
-          ),
+              content: Text("❌ Excel Hatası: $e"),
+              backgroundColor: Colors.redAccent),
         );
       }
     } finally {
-      if (mounted) {
-        setState(() => _isUploading = false);
-      }
+      if (mounted) setState(() => _isUploading = false);
     }
   }
 
-  // ✏️ Hat İlerleme Metrajı Güncelleme Diyaloğu
+  // ➕ Yeni Sanat Yapısı / Branşman Ekleme Penceresi (Excel + Manuel)
+  void _showAddStructureDialog(PipeLine line) {
+    final nameCtrl = TextEditingController();
+    final kmCtrl = TextEditingController();
+    final concreteCtrl = TextEditingController();
+    final featureCtrl = TextEditingController();
+    final diameterCtrl = TextEditingController();
+    String selectedType = "Vantuz";
+
+    final List<String> structureTypes = [
+      "Vantuz",
+      "Tahliye Vanası",
+      "Hidrant",
+      "Vana Odası",
+      "Branşman",
+      "Sayaç Odası",
+      "Basınç Kırıcı",
+      "Özel Yapı",
+    ];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1E2638),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) => Padding(
+          padding: EdgeInsets.only(
+            top: 12,
+            left: 16,
+            right: 16,
+            bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[600],
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const Text(
+                  "Yeni Sanat Yapısı / Branşman Ekle",
+                  style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFFFF9F1C)),
+                ),
+                const SizedBox(height: 16),
+
+                // 🟢 EXCEL ILE TOPLU YÜKLEME BUTONU
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF2EC4B6),
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size(double.infinity, 48),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                  ),
+                  onPressed: () async {
+                    Navigator.pop(context);
+                    await _pickAndUploadExcel();
+                  },
+                  icon: const Icon(Icons.table_chart, color: Colors.white),
+                  label: const Text(
+                    "📊 EXCEL DOSYASI İLE TOPLU YÜKLE",
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                  ),
+                ),
+
+                const SizedBox(height: 16),
+                const Row(
+                  children: [
+                    Expanded(child: Divider(color: Colors.white24)),
+                    Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 8.0),
+                      child: Text("VEYA MANUEL EKLEYİN",
+                          style: TextStyle(
+                              color: Colors.grey,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                    Expanded(child: Divider(color: Colors.white24)),
+                  ],
+                ),
+                const SizedBox(height: 16),
+
+                const Text("Yapı Tipi Seçin:",
+                    style: TextStyle(color: Colors.grey, fontSize: 13)),
+                const SizedBox(height: 6),
+                DropdownButtonFormField<String>(
+                  initialValue: selectedType,
+                  dropdownColor: const Color(0xFF1E2638),
+                  style: const TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.bold),
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: const Color(0xFF0E1420),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide.none),
+                  ),
+                  items: structureTypes
+                      .map((t) => DropdownMenuItem(value: t, child: Text(t)))
+                      .toList(),
+                  onChanged: (val) {
+                    if (val != null) setModalState(() => selectedType = val);
+                  },
+                ),
+                const SizedBox(height: 12),
+
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: nameCtrl,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: InputDecoration(
+                          labelText: "Yapı No / Tanım (Örn: V-12)",
+                          labelStyle:
+                              const TextStyle(color: Colors.grey, fontSize: 12),
+                          filled: true,
+                          fillColor: const Color(0xFF0E1420),
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                              borderSide: BorderSide.none),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        controller: kmCtrl,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: InputDecoration(
+                          labelText: "Kilometraj (Km)",
+                          labelStyle:
+                              const TextStyle(color: Colors.grey, fontSize: 12),
+                          filled: true,
+                          fillColor: const Color(0xFF0E1420),
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                              borderSide: BorderSide.none),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+
+                TextField(
+                  controller: concreteCtrl,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: "Beton Miktarı (m³)",
+                    labelStyle:
+                        const TextStyle(color: Colors.grey, fontSize: 12),
+                    filled: true,
+                    fillColor: const Color(0xFF0E1420),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide.none),
+                  ),
+                ),
+                const SizedBox(height: 20),
+
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFF9F1C),
+                    foregroundColor: Colors.black,
+                    minimumSize: const Size(double.infinity, 50),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                  ),
+                  onPressed: () async {
+                    if (nameCtrl.text.trim().isEmpty) return;
+
+                    Map<String, dynamic> newStructure = {
+                      'id': DateTime.now().millisecondsSinceEpoch.toString(),
+                      'name': nameCtrl.text.trim(),
+                      'km': kmCtrl.text.trim().isEmpty
+                          ? "0+000"
+                          : kmCtrl.text.trim(),
+                      'type': selectedType,
+                      'concreteAmount': concreteCtrl.text.trim(),
+                      'feature': featureCtrl.text.trim(),
+                      'diameter': diameterCtrl.text.trim(),
+                      'status': 'Bekliyor',
+                      'createdAt': DateTime.now().toIso8601String(),
+                    };
+
+                    await _firestore
+                        .collection('projects')
+                        .doc(widget.activeProjectId)
+                        .collection('lines')
+                        .doc(line.id)
+                        .update({
+                      'sanatYapitlari': FieldValue.arrayUnion([newStructure]),
+                      'updatedAt': FieldValue.serverTimestamp(),
+                    });
+
+                    if (context.mounted) Navigator.pop(context);
+                  },
+                  child: const Text("PROJEYE EKLE VE YAYINLA",
+                      style:
+                          TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ✏️ Hat İlerleme Metrajı Güncelleme
   void _editProgressDialog(PipeLine line) {
     final kaziCtrl =
         TextEditingController(text: line.kaziKm.toStringAsFixed(2));
@@ -167,12 +377,11 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                "📝 İlerleme Güncelle: ${line.code} (${line.name})",
+                "📝 İlerleme Güncelle: ${line.code}",
                 style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFFFF9F1C),
-                ),
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFFFF9F1C)),
               ),
               const SizedBox(height: 16),
               _buildKmInput("1. Kazı Aşaması (km)", kaziCtrl),
@@ -244,12 +453,9 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
                 children: [
                   const CircularProgressIndicator(color: Color(0xFFFF9F1C)),
                   const SizedBox(height: 16),
-                  Text(
-                    _uploadStatusText,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.bold),
-                  ),
+                  Text(_uploadStatusText,
+                      style: const TextStyle(
+                          color: Colors.white, fontWeight: FontWeight.bold)),
                 ],
               ),
             )
@@ -272,9 +478,7 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
                         d.data() as Map<String, dynamic>, d.id))
                     .toList();
 
-                if (allLines.isEmpty) {
-                  return _buildEmptyState();
-                }
+                if (allLines.isEmpty) return _buildEmptyState();
 
                 PipeLine? currentLine;
                 if (_selectedLineId != null) {
@@ -282,17 +486,15 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
                     (l) => l.id == _selectedLineId,
                     orElse: () => allLines.first,
                   );
+                } else {
+                  currentLine = allLines.first;
                 }
 
                 return Column(
                   children: [
-                    _selectedLineId == null
-                        ? _buildOverviewHeader(allLines)
-                        : _buildDetailHeader(allLines, currentLine!),
+                    _buildDetailHeader(allLines, currentLine),
                     Expanded(
-                      child: _selectedLineId == null
-                          ? _buildOverviewList(allLines)
-                          : _buildLineDetailView(currentLine!),
+                      child: _buildLineDetailView(currentLine),
                     ),
                   ],
                 );
@@ -301,237 +503,43 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
     );
   }
 
-  // 1️⃣ ŞEBEKE ÖZET PANOSU HEADER (KML Yükle Butonlu)
-  Widget _buildOverviewHeader(List<PipeLine> lines) {
-    double totalNetworkKm =
-        lines.fold(0.0, (acc, l) => acc + (l.totalKm - l.startKm));
-    double completedKm = lines.fold(
-        0.0,
-        (acc, l) =>
-            acc + (l.montajKm - l.startKm).clamp(0.0, l.totalKm - l.startKm));
-    double totalProgress =
-        totalNetworkKm > 0 ? (completedKm / totalNetworkKm) * 100 : 0.0;
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-      color: const Color(0xFF1E2638),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                "🗺️ Şebeke Özet Panosu",
-                style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold),
-              ),
-              Row(
-                children: [
-                  OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFFFF9F1C),
-                      side: const BorderSide(color: Color(0xFFFF9F1C)),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 4),
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    onPressed: _pickAndUploadKml,
-                    icon: const Icon(Icons.file_upload_outlined, size: 16),
-                    label: const Text("KML YÜKLE",
-                        style: TextStyle(
-                            fontSize: 11, fontWeight: FontWeight.bold)),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFF9F1C).withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      "${lines.length} Hat",
-                      style: const TextStyle(
-                          color: Color(0xFFFF9F1C),
-                          fontWeight: FontWeight.bold,
-                          fontSize: 11),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: LinearProgressIndicator(
-                    value: totalProgress / 100,
-                    minHeight: 10,
-                    backgroundColor: Colors.white10,
-                    color: const Color(0xFFFF9F1C),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Text(
-                "%${totalProgress.toStringAsFixed(1)}",
-                style: const TextStyle(
-                    color: Color(0xFFFF9F1C),
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            onChanged: (val) =>
-                setState(() => _searchQuery = val.trim().toLowerCase()),
-            style: const TextStyle(color: Colors.white, fontSize: 13),
-            decoration: InputDecoration(
-              hintText: "Hat Ara (Örn: S2-1, S2-22)...",
-              hintStyle: const TextStyle(color: Colors.grey, fontSize: 13),
-              prefixIcon:
-                  const Icon(Icons.search, color: Colors.grey, size: 20),
-              filled: true,
-              fillColor: const Color(0xFF0E1420),
-              contentPadding: const EdgeInsets.symmetric(vertical: 0),
-              border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide.none),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // 2️⃣ HAT DETAY HEADER
   Widget _buildDetailHeader(List<PipeLine> lines, PipeLine activeLine) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       color: const Color(0xFF1E2638),
-      child: Row(
-        children: [
-          IconButton(
-            icon: const Icon(Icons.arrow_back, color: Color(0xFFFF9F1C)),
-            onPressed: () => setState(() => _selectedLineId = null),
-          ),
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              decoration: BoxDecoration(
-                color: const Color(0xFF0E1420),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.white12),
-              ),
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<String>(
-                  value: activeLine.id,
-                  dropdownColor: const Color(0xFF1E2638),
-                  isExpanded: true,
-                  icon: const Icon(Icons.arrow_drop_down,
-                      color: Color(0xFFFF9F1C)),
-                  items: lines.map((line) {
-                    return DropdownMenuItem<String>(
-                      value: line.id,
-                      child: Text(
-                        "📌 ${line.code} (${line.pipeType} • ${line.totalKm.toStringAsFixed(1)} km)",
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    );
-                  }).toList(),
-                  onChanged: (newId) {
-                    if (newId != null) {
-                      setState(() => _selectedLineId = newId);
-                    }
-                  },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0E1420),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.white12),
+        ),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<String>(
+            value: activeLine.id,
+            dropdownColor: const Color(0xFF1E2638),
+            isExpanded: true,
+            items: lines.map((line) {
+              return DropdownMenuItem<String>(
+                value: line.id,
+                child: Text(
+                  "📌 ${line.code} (${line.pipeType})",
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14),
                 ),
-              ),
-            ),
+              );
+            }).toList(),
+            onChanged: (newId) {
+              if (newId != null) setState(() => _selectedLineId = newId);
+            },
           ),
-        ],
+        ),
       ),
     );
   }
 
-  // 3️⃣ ÖZET LİSTESİ
-  Widget _buildOverviewList(List<PipeLine> lines) {
-    final filteredLines = lines.where((l) {
-      return l.code.toLowerCase().contains(_searchQuery) ||
-          l.name.toLowerCase().contains(_searchQuery);
-    }).toList();
-
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: filteredLines.length,
-      itemBuilder: (context, i) {
-        final line = filteredLines[i];
-        double progress = line.progressPercentage;
-
-        return Card(
-          color: const Color(0xFF1E2638),
-          margin: const EdgeInsets.only(bottom: 10),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          child: ListTile(
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            title: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(line.code,
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 15)),
-                Text("%${progress.toStringAsFixed(1)}",
-                    style: const TextStyle(
-                        color: Color(0xFFFF9F1C),
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13)),
-              ],
-            ),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 4),
-                Text(
-                    "${line.name} • ${line.pipeType} • Uzunluk: ${line.totalKm.toStringAsFixed(2)} km",
-                    style: const TextStyle(color: Colors.grey, fontSize: 11)),
-                const SizedBox(height: 8),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: LinearProgressIndicator(
-                    value: progress / 100,
-                    minHeight: 6,
-                    backgroundColor: Colors.white10,
-                    color: const Color(0xFF2EC4B6),
-                  ),
-                ),
-              ],
-            ),
-            trailing: const Icon(Icons.chevron_right, color: Colors.grey),
-            onTap: () {
-              setState(() => _selectedLineId = line.id);
-            },
-          ),
-        );
-      },
-    );
-  }
-
-  // 4️⃣ SEÇİLİ HAT DETAY GÖRÜNÜMÜ
   Widget _buildLineDetailView(PipeLine line) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -541,11 +549,13 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text("Hat İlerleme Durumu (${line.pipeType})",
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      fontWeight: FontWeight.bold)),
+              Text(
+                "Hat İlerleme Durumu (${line.pipeType})",
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold),
+              ),
               IconButton(
                 icon: const Icon(Icons.edit, color: Color(0xFFFF9F1C)),
                 onPressed: () => _editProgressDialog(line),
@@ -561,61 +571,86 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
               const Color(0xFF2EC4B6)),
           _buildStageCard("4. Geri Dolgu / Kapama", line.kapamaKm, line.totalKm,
               Colors.blueAccent),
-          const SizedBox(height: 20),
+          const SizedBox(height: 24),
+
+          // 📌 SANAT YAPILARI BAŞLIĞI VE + EKLE BUTONU
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                  "Sanat Yapıları & Branşmanlar (${line.sanatYapitlari.length})",
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold)),
-              // 📊 EXCEL YÜKLEME BUTONU
-              TextButton.icon(
-                onPressed: _pickAndUploadExcel,
-                icon: const Icon(Icons.add, size: 16, color: Color(0xFFFF9F1C)),
-                label: const Text("EKLE",
-                    style: TextStyle(color: Color(0xFFFF9F1C), fontSize: 12)),
+              const Text(
+                "Sanat Yapıları & Branşmanlar",
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold),
+              ),
+              InkWell(
+                onTap: () => _showAddStructureDialog(line),
+                child: const Row(
+                  children: [
+                    Icon(Icons.add_circle, color: Color(0xFFFF9F1C), size: 18),
+                    SizedBox(width: 4),
+                    Text(
+                      "EKLE",
+                      style: TextStyle(
+                          color: Color(0xFFFF9F1C),
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           if (line.sanatYapitlari.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 20),
-              child: Center(
-                  child: Text("Bu hatta ait henüz sanat yapısı bulunmuyor.",
-                      style: TextStyle(color: Colors.grey, fontSize: 12))),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 30, horizontal: 16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E2638).withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white10),
+              ),
+              child: const Text(
+                "Henüz eklenmiş bir sanat yapısı veya branşman yok.",
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey, fontSize: 13),
+              ),
             )
           else
             Column(
               children: line.sanatYapitlari.map((sy) {
                 return Card(
                   color: const Color(0xFF1E2638),
+                  margin: const EdgeInsets.only(bottom: 8),
                   child: ListTile(
                     leading: const Icon(Icons.settings_input_component,
                         color: Color(0xFFFF9F1C)),
-                    title: Text(sy["name"] ?? "Sanat Yapısı",
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold)),
+                    title: Text(
+                      "${sy["name"] ?? "Yapı"} - ${sy["type"] ?? ""}",
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold),
+                    ),
                     subtitle: Text(
-                        "Km: ${sy["km"] ?? "0+000"} • Tür: ${sy["type"] ?? "Yapı"} ${sy["feature"] != null ? '(${sy["feature"]})' : ''}",
-                        style:
-                            const TextStyle(color: Colors.grey, fontSize: 11)),
+                      "Km: ${sy["km"] ?? "0+000"} • Özellik: ${sy["feature"] ?? "-"} ${sy["diameter"] != null && sy["diameter"].isNotEmpty ? '(${sy["diameter"]})' : ''}",
+                      style: const TextStyle(color: Colors.grey, fontSize: 11),
+                    ),
                     trailing: Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
                           color: Colors.green.withValues(alpha: 0.2),
                           borderRadius: BorderRadius.circular(6)),
-                      child: Text(sy["status"] ?? "Bekliyor",
-                          style: const TextStyle(
-                              color: Colors.green,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold)),
+                      child: Text(
+                        sy["status"] ?? "Bekliyor",
+                        style: const TextStyle(
+                            color: Colors.green,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold),
+                      ),
                     ),
                   ),
                 );
@@ -646,11 +681,10 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
                         fontSize: 13,
                         fontWeight: FontWeight.w600)),
                 Text(
-                    "Km: ${currentKm.toStringAsFixed(2)} / ${totalKm.toStringAsFixed(2)}",
-                    style: TextStyle(
-                        color: color,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12)),
+                  "Km: ${currentKm.toStringAsFixed(2)}",
+                  style: TextStyle(
+                      color: color, fontWeight: FontWeight.bold, fontSize: 12),
+                ),
               ],
             ),
             const SizedBox(height: 8),
