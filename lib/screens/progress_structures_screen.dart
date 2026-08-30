@@ -1,8 +1,12 @@
 // lib/screens/progress_structures_screen.dart
 
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import '../models/pipe_line_model.dart';
+import '../services/kml_parser_service.dart';
+import '../services/excel_parser_service.dart';
 
 class ProgressStructuresScreen extends StatefulWidget {
   final String activeProjectId;
@@ -19,8 +23,118 @@ class ProgressStructuresScreen extends StatefulWidget {
 
 class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final KmlParserService _kmlService = KmlParserService();
+  final ExcelParserService _excelService = ExcelParserService();
+
   String? _selectedLineId;
   String _searchQuery = "";
+  bool _isUploading = false;
+  String _uploadStatusText = "";
+
+  // 📂 Cihazdan KML Dosyası Seçip Veritabanına Yükleme Metodu
+  Future<void> _pickAndUploadKml() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['kml'],
+        withData: true,
+      );
+
+      if (result != null && result.files.single.bytes != null) {
+        setState(() {
+          _isUploading = true;
+          _uploadStatusText =
+              "KML Dosyası Ayrıştırılıyor ve Şebeke Oluşturuluyor...";
+        });
+
+        // KML dosya içeriğini UTF-8 metin olarak okuma
+        String kmlContent = utf8.decode(result.files.single.bytes!);
+
+        // Parser servisini çalıştırıp Firestore'a kaydetme
+        int savedCount = await _kmlService.parseAndSaveKml(
+          kmlContent: kmlContent,
+          projectId: widget.activeProjectId,
+        );
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                  "🎉 $savedCount adet şebeke hattı ve sanat yapıları başarıyla aktarıldı!"),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("❌ KML Ayrıştırma Hatası: $e"),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isUploading = false);
+      }
+    }
+  }
+
+  // 📊 Cihazdan Excel Dosyası Seçip Yapıları Aktarma Metodu
+  Future<void> _pickAndUploadExcel() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['xlsx', 'xls', 'xlsm', 'csv'],
+        allowMultiple: true,
+        withData: true,
+      );
+
+      if (result != null && result.files.isNotEmpty) {
+        setState(() {
+          _isUploading = true;
+          _uploadStatusText =
+              "${result.files.length} Adet Excel Ayrıştırılıyor ve Yapılar Ekleniyor...";
+        });
+
+        int totalSavedCount = 0;
+        for (var file in result.files) {
+          if (file.bytes != null) {
+            int count = await _excelService.parseAndSaveExcelBytes(
+              bytes: file.bytes!,
+              projectId: widget.activeProjectId,
+            );
+            totalSavedCount += count;
+          }
+        }
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                  "🎉 Toplam $totalSavedCount adet sanat yapısı / branşman başarıyla eklendi!"),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("❌ Excel Yükleme Hatası: $e"),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isUploading = false);
+      }
+    }
+  }
 
   // ✏️ Hat İlerleme Metrajı Güncelleme Diyaloğu
   void _editProgressDialog(PipeLine line) {
@@ -123,54 +237,71 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0E1420),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: _firestore
-            .collection('projects')
-            .doc(widget.activeProjectId)
-            .collection('lines')
-            .snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(
-                child: CircularProgressIndicator(color: Color(0xFFFF9F1C)));
-          }
-
-          final docs = snapshot.data?.docs ?? [];
-          List<PipeLine> allLines = docs
-              .map((d) =>
-                  PipeLine.fromMap(d.data() as Map<String, dynamic>, d.id))
-              .toList();
-
-          if (allLines.isEmpty) {
-            return _buildEmptyState();
-          }
-
-          PipeLine? currentLine;
-          if (_selectedLineId != null) {
-            currentLine = allLines.firstWhere(
-              (l) => l.id == _selectedLineId,
-              orElse: () => allLines.first,
-            );
-          }
-
-          return Column(
-            children: [
-              _selectedLineId == null
-                  ? _buildOverviewHeader(allLines)
-                  : _buildDetailHeader(allLines, currentLine!),
-              Expanded(
-                child: _selectedLineId == null
-                    ? _buildOverviewList(allLines)
-                    : _buildLineDetailView(currentLine!),
+      body: _isUploading
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const CircularProgressIndicator(color: Color(0xFFFF9F1C)),
+                  const SizedBox(height: 16),
+                  Text(
+                    _uploadStatusText,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.bold),
+                  ),
+                ],
               ),
-            ],
-          );
-        },
-      ),
+            )
+          : StreamBuilder<QuerySnapshot>(
+              stream: _firestore
+                  .collection('projects')
+                  .doc(widget.activeProjectId)
+                  .collection('lines')
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(
+                      child:
+                          CircularProgressIndicator(color: Color(0xFFFF9F1C)));
+                }
+
+                final docs = snapshot.data?.docs ?? [];
+                List<PipeLine> allLines = docs
+                    .map((d) => PipeLine.fromMap(
+                        d.data() as Map<String, dynamic>, d.id))
+                    .toList();
+
+                if (allLines.isEmpty) {
+                  return _buildEmptyState();
+                }
+
+                PipeLine? currentLine;
+                if (_selectedLineId != null) {
+                  currentLine = allLines.firstWhere(
+                    (l) => l.id == _selectedLineId,
+                    orElse: () => allLines.first,
+                  );
+                }
+
+                return Column(
+                  children: [
+                    _selectedLineId == null
+                        ? _buildOverviewHeader(allLines)
+                        : _buildDetailHeader(allLines, currentLine!),
+                    Expanded(
+                      child: _selectedLineId == null
+                          ? _buildOverviewList(allLines)
+                          : _buildLineDetailView(currentLine!),
+                    ),
+                  ],
+                );
+              },
+            ),
     );
   }
 
-  // 1️⃣ ŞEBEKE ÖZET PANOSU HEADER
+  // 1️⃣ ŞEBEKE ÖZET PANOSU HEADER (KML Yükle Butonlu)
   Widget _buildOverviewHeader(List<PipeLine> lines) {
     double totalNetworkKm =
         lines.fold(0.0, (acc, l) => acc + (l.totalKm - l.startKm));
@@ -191,26 +322,46 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const Text(
-                "🗺️ Şebeke İlerleme Özet Panosu",
+                "🗺️ Şebeke Özet Panosu",
                 style: TextStyle(
                     color: Colors.white,
                     fontSize: 16,
                     fontWeight: FontWeight.bold),
               ),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFF9F1C).withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  "${lines.length} Hat",
-                  style: const TextStyle(
-                      color: Color(0xFFFF9F1C),
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12),
-                ),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFFFF9F1C),
+                      side: const BorderSide(color: Color(0xFFFF9F1C)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    onPressed: _pickAndUploadKml,
+                    icon: const Icon(Icons.file_upload_outlined, size: 16),
+                    label: const Text("KML YÜKLE",
+                        style: TextStyle(
+                            fontSize: 11, fontWeight: FontWeight.bold)),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF9F1C).withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      "${lines.length} Hat",
+                      style: const TextStyle(
+                          color: Color(0xFFFF9F1C),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 11),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -261,7 +412,7 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
     );
   }
 
-  // 2️⃣ HAT DETAY HEADER (Hızlı Geçiş Seçicili)
+  // 2️⃣ HAT DETAY HEADER
   Widget _buildDetailHeader(List<PipeLine> lines, PipeLine activeLine) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -314,7 +465,7 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
     );
   }
 
-  // 3️⃣ ÖZET LİSTESİ (Tüm Hat Kartları)
+  // 3️⃣ ÖZET LİSTESİ
   Widget _buildOverviewList(List<PipeLine> lines) {
     final filteredLines = lines.where((l) {
       return l.code.toLowerCase().contains(_searchQuery) ||
@@ -380,7 +531,7 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
     );
   }
 
-  // 4️⃣ SEÇİLİ HAT DETAY GÖRÜNÜMÜ (4 Aşamalı İlerleme & Sanat Yapıları)
+  // 4️⃣ SEÇİLİ HAT DETAY GÖRÜNÜMÜ
   Widget _buildLineDetailView(PipeLine line) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -420,8 +571,9 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
                       color: Colors.white,
                       fontSize: 14,
                       fontWeight: FontWeight.bold)),
+              // 📊 EXCEL YÜKLEME BUTONU
               TextButton.icon(
-                onPressed: () {},
+                onPressed: _pickAndUploadExcel,
                 icon: const Icon(Icons.add, size: 16, color: Color(0xFFFF9F1C)),
                 label: const Text("EKLE",
                     style: TextStyle(color: Color(0xFFFF9F1C), fontSize: 12)),
@@ -450,7 +602,7 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
                             fontSize: 13,
                             fontWeight: FontWeight.bold)),
                     subtitle: Text(
-                        "Km: ${sy["km"] ?? "0+000"} • Metraj: ${sy["beton"] ?? "0"} m³",
+                        "Km: ${sy["km"] ?? "0+000"} • Tür: ${sy["type"] ?? "Yapı"} ${sy["feature"] != null ? '(${sy["feature"]})' : ''}",
                         style:
                             const TextStyle(color: Colors.grey, fontSize: 11)),
                     trailing: Container(
@@ -459,7 +611,7 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
                       decoration: BoxDecoration(
                           color: Colors.green.withValues(alpha: 0.2),
                           borderRadius: BorderRadius.circular(6)),
-                      child: Text(sy["status"] ?? "Tamamlandı",
+                      child: Text(sy["status"] ?? "Bekliyor",
                           style: const TextStyle(
                               color: Colors.green,
                               fontSize: 10,
@@ -529,41 +681,13 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
           const SizedBox(height: 20),
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFFF9F1C),
-                foregroundColor: Colors.black),
-            onPressed: () async {
-              WriteBatch batch = _firestore.batch();
-              List<String> lineCodes = [
-                "S2 Ana Hat",
-                "S2-1",
-                "S2-2",
-                "S2-2-1",
-                "S2-2-2"
-              ];
-              for (var code in lineCodes) {
-                var docRef = _firestore
-                    .collection('projects')
-                    .doc(widget.activeProjectId)
-                    .collection('lines')
-                    .doc();
-                batch.set(docRef, {
-                  'id': docRef.id,
-                  'name': '$code Boru Hattı',
-                  'code': code,
-                  'pipeType': 'C1000 CTP',
-                  'totalKm': 5.0,
-                  'startKm': 0.0,
-                  'kaziKm': 2.5,
-                  'yataklamaKm': 2.0,
-                  'montajKm': 1.5,
-                  'kapamaKm': 1.0,
-                  'sanatYapitlari': [],
-                });
-              }
-              await batch.commit();
-            },
-            icon: const Icon(Icons.playlist_add),
-            label: const Text("ÖRNEK ŞEBEKE HATLARINI YÜKLE",
+              backgroundColor: const Color(0xFFFF9F1C),
+              foregroundColor: Colors.black,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            onPressed: _pickAndUploadKml,
+            icon: const Icon(Icons.file_upload),
+            label: const Text("KML DOSYASI SEÇ VE YÜKLE",
                 style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],

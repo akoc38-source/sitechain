@@ -30,10 +30,10 @@ dependencies:
 
   # 🛡️ GÜVENLİK, XML VE KML PAKETLERİ
   encrypt: ^5.0.3
-  xml: ^7.0.1
-  archive: ^4.0.9
+  xml: ^6.5.0
+  archive: ^3.6.1
 
-  # 📍 HARİTA VE KONUM MOTORLARI (Versiyon Çakışması Çözüldü)
+  # 📍 HARİTA VE KONUM MOTORLARI
   google_maps_flutter: ^2.5.3
   geolocator: ^12.0.0
   flutter_background_service: ^5.0.5
@@ -49,6 +49,7 @@ dependencies:
   table_calendar: ^3.0.9
 
   # 📊 EXCEL RAPORLAMA VE BAĞLANTILAR
+  excel: ^4.0.6
   syncfusion_flutter_xlsio: any
   open_filex: ^4.3.2
   url_launcher: ^6.3.2

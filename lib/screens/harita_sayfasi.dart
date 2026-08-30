@@ -1,3 +1,5 @@
+// lib/screens/harita_sayfasi.dart
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -5,6 +7,7 @@ import 'dart:ui' as ui;
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -16,6 +19,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 
 import '../utils/line_calculator.dart';
+import '../services/kml_parser_service.dart';
+import '../services/excel_parser_service.dart';
+import '../services/dynamic_icon_generator.dart';
 import 'kml_yonetim_sayfasi.dart';
 
 // 🚀 GÖKBÖRÜ HIGH-PERFORMANCE KML TILE ENGINE
@@ -110,13 +116,25 @@ class _HaritaSayfasiState extends State<HaritaSayfasi> {
   Set<TileOverlay> _tileOverlays = {};
   bool _isLoading = false;
   bool _isKmlVisible = true;
+  bool _showSanatYapitlari =
+      true; // 👁️ Sanat yapılarını toplu açıp kapatma bayrağı
   bool _konumAktif = true;
+  String? _selectedLineCode;
 
-  StreamSubscription<DocumentSnapshot>? _projectSubscription;
+  int _loadedLineCount = 0;
+  int _totalCoordinateCount = 0;
+  String _statusMessage = "KML Katmanları Okunuyor...";
+
+  StreamSubscription<QuerySnapshot>? _linesSubscription;
+  StreamSubscription<DocumentSnapshot>? _mainProjectSubscription;
   StreamSubscription<Position>? _positionStreamSubscription;
   bool _ilkKonumKilitlendi = false;
+  bool _haritaOdaklandi = false;
 
   final Map<String, List<LatLng>> _rawLineGeometries = {};
+  final List<String> _availableLineCodes = [];
+  final KmlParserService _kmlParserService = KmlParserService();
+  final ExcelParserService _excelParserService = ExcelParserService();
 
   @override
   void initState() {
@@ -127,7 +145,8 @@ class _HaritaSayfasiState extends State<HaritaSayfasi> {
 
   @override
   void dispose() {
-    _projectSubscription?.cancel();
+    _linesSubscription?.cancel();
+    _mainProjectSubscription?.cancel();
     _positionStreamSubscription?.cancel();
     super.dispose();
   }
@@ -175,7 +194,9 @@ class _HaritaSayfasiState extends State<HaritaSayfasi> {
       ).listen(
         (Position pos) {
           if (!mounted) return;
-          if (!_ilkKonumKilitlendi && _mapController != null) {
+          if (!_ilkKonumKilitlendi &&
+              !_haritaOdaklandi &&
+              _mapController != null) {
             setState(() => _ilkKonumKilitlendi = true);
             _mapController!.animateCamera(
               CameraUpdate.newLatLngZoom(
@@ -204,17 +225,74 @@ class _HaritaSayfasiState extends State<HaritaSayfasi> {
     }
   }
 
+  Future<void> _pickAndUploadExcel() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['xlsx', 'xls', 'xlsm', 'csv'],
+        allowMultiple: true,
+        withData: true,
+      );
+
+      if (result != null && result.files.isNotEmpty) {
+        setState(() {
+          _isLoading = true;
+          _statusMessage =
+              "${result.files.length} Adet Excel Ayrıştırılıyor...";
+        });
+
+        int totalSavedCount = 0;
+        for (var file in result.files) {
+          if (file.bytes != null) {
+            int count = await _excelParserService.parseAndSaveExcelBytes(
+              bytes: file.bytes!,
+              projectId: widget.activeProjectDocId,
+            );
+            totalSavedCount += count;
+          }
+        }
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                  "🎉 ${result.files.length} dosyadan toplam $totalSavedCount adet yapı haritada çizildi!"),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("❌ Excel Okuma Hatası: $e"),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } finally {
+      _startCanliProjeDinleyicisi();
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   Future<void> _loadGokboruEngine() async {
     if (_isLoading) return;
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _statusMessage = "KML Katmanları Okunuyor...";
+    });
 
     try {
       var snap =
           await FirebaseFirestore.instance.collection('kml_katmanlari').get();
-      if (snap.docs.isEmpty) return;
+      if (snap.docs.isEmpty) {
+        _startCanliProjeDinleyicisi();
+        return;
+      }
 
       List<Map<String, dynamic>> allGeometries = [];
-      double? minLat, maxLat, minLon, maxLon;
 
       for (var doc in snap.docs) {
         String? url = doc.data()['url'];
@@ -230,6 +308,11 @@ class _HaritaSayfasiState extends State<HaritaSayfasi> {
         }
 
         if (data != null && data.isNotEmpty) {
+          await _kmlParserService.parseAndSaveKmlBytes(
+            bytes: data,
+            projectId: widget.activeProjectDocId,
+          );
+
           String kmlStr = "";
           try {
             final archive = ZipDecoder().decodeBytes(data);
@@ -248,14 +331,22 @@ class _HaritaSayfasiState extends State<HaritaSayfasi> {
 
           final xml = XmlDocument.parse(kmlStr);
 
-          for (var pm in xml.findAllElements('Placemark')) {
+          for (var pm in xml.descendants
+              .whereType<XmlElement>()
+              .where((e) => e.name.local.toLowerCase() == 'placemark')) {
             String lineName = "S2";
-            final nameNode = pm.findElements('name').firstOrNull;
+            final nameNode = pm.descendants
+                .whereType<XmlElement>()
+                .where((e) => e.name.local.toLowerCase() == 'name')
+                .firstOrNull;
             if (nameNode != null && nameNode.innerText.trim().isNotEmpty) {
               lineName = nameNode.innerText.trim();
             }
 
-            final coordsNode = pm.findAllElements('coordinates').firstOrNull;
+            final coordsNode = pm.descendants
+                .whereType<XmlElement>()
+                .where((e) => e.name.local.toLowerCase() == 'coordinates')
+                .firstOrNull;
             if (coordsNode == null) continue;
 
             final coords = coordsNode.innerText.trim();
@@ -267,12 +358,14 @@ class _HaritaSayfasiState extends State<HaritaSayfasi> {
                 double? lon = double.tryParse(p[0]);
                 double? lat = double.tryParse(p[1]);
                 if (lat != null && lon != null) {
-                  pts.add(LatLng(lat, lon));
-
-                  if (minLat == null || lat < minLat) minLat = lat;
-                  if (maxLat == null || lat > maxLat) maxLat = lat;
-                  if (minLon == null || lon < minLon) minLon = lon;
-                  if (maxLon == null || lon > maxLon) maxLon = lon;
+                  if (lon >= 36.0 &&
+                      lon <= 42.5 &&
+                      lat >= 26.0 &&
+                      lat <= 36.0) {
+                    pts.add(LatLng(lon, lat));
+                  } else {
+                    pts.add(LatLng(lat, lon));
+                  }
                 }
               }
             }
@@ -280,14 +373,19 @@ class _HaritaSayfasiState extends State<HaritaSayfasi> {
             if (pts.isNotEmpty) {
               _rawLineGeometries[lineName] = pts;
 
+              double gMinLat = pts.map((p) => p.latitude).reduce(math.min);
+              double gMaxLat = pts.map((p) => p.latitude).reduce(math.max);
+              double gMinLon = pts.map((p) => p.longitude).reduce(math.min);
+              double gMaxLon = pts.map((p) => p.longitude).reduce(math.max);
+
               allGeometries.add({
                 'pts': pts,
                 'clr': const Color(0xFF4A148C),
                 'isPoly': false,
-                'minLat': -90.0,
-                'maxLat': 90.0,
-                'minLon': -180.0,
-                'maxLon': 180.0,
+                'minLat': gMinLat,
+                'maxLat': gMaxLat,
+                'minLon': gMinLon,
+                'maxLon': gMaxLon,
               });
             }
           }
@@ -303,146 +401,309 @@ class _HaritaSayfasiState extends State<HaritaSayfasi> {
             ),
           };
         });
-
-        if (_mapController != null && minLat != null && minLon != null) {
-          _mapController!.animateCamera(
-            CameraUpdate.newLatLngBounds(
-              LatLngBounds(
-                southwest: LatLng(minLat, minLon),
-                northeast: LatLng(maxLat!, maxLon!),
-              ),
-              50,
-            ),
-          );
-        }
-
-        // 🔗 TEK HAKİKAT KAYNAĞI CANLI CANLI DİNLENİYOR
-        _startCanliProjeDinleyicisi();
       }
     } catch (e) {
       debugPrint("Tile Engine Hatası: $e");
     } finally {
+      _startCanliProjeDinleyicisi();
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  // 📡 DASHBOARD İLE %100 EŞ ZAMANLI CANLI DİNLEYİCİ
   void _startCanliProjeDinleyicisi() {
-    _projectSubscription?.cancel();
-    _projectSubscription = FirebaseFirestore.instance
+    _linesSubscription?.cancel();
+
+    _linesSubscription = FirebaseFirestore.instance
+        .collection('projects')
+        .doc(widget.activeProjectDocId)
+        .collection('lines')
+        .snapshots()
+        .listen((querySnap) {
+      if (querySnap.docs.isNotEmpty) {
+        _processLinesSnapshot(querySnap.docs);
+      } else {
+        setState(() {
+          _statusMessage = "⚠️ Projede hiç hat bulunamadı!";
+          _loadedLineCount = 0;
+          _totalCoordinateCount = 0;
+        });
+        _startMainProjectFallbackListener();
+      }
+    });
+  }
+
+  Future<void> _processLinesSnapshot(List<QueryDocumentSnapshot> docs) async {
+    Set<Polyline> newPolylines = {};
+    Set<Marker> newMarkers = {};
+    List<String> codes = [];
+
+    double? minLat, maxLat, minLon, maxLon;
+    int totalPts = 0;
+
+    for (var doc in docs) {
+      var data = doc.data() as Map<String, dynamic>;
+      String lineCode = data["code"] ?? doc.id;
+      codes.add(lineCode);
+
+      if (_selectedLineCode != null && _selectedLineCode != lineCode) {
+        continue;
+      }
+
+      List<LatLng> basePoints = [];
+      if (data['coordinates'] != null &&
+          (data['coordinates'] as List).isNotEmpty) {
+        for (var c in (data['coordinates'] as List)) {
+          if (c is Map && c.containsKey('lat') && c.containsKey('lng')) {
+            double? lat = double.tryParse(c['lat'].toString());
+            double? lng = double.tryParse(c['lng'].toString());
+            if (lat != null && lng != null) {
+              LatLng p = LatLng(lat, lng);
+              basePoints.add(p);
+              totalPts++;
+
+              if (minLat == null || lat < minLat) minLat = lat;
+              if (maxLat == null || lat > maxLat) maxLat = lat;
+              if (minLon == null || lng < minLon) minLon = lng;
+              if (maxLon == null || lng > maxLon) maxLon = lng;
+            }
+          }
+        }
+      } else if (_rawLineGeometries.containsKey(lineCode)) {
+        basePoints = _rawLineGeometries[lineCode]!;
+        totalPts += basePoints.length;
+      }
+
+      if (basePoints.isEmpty) continue;
+
+      newPolylines.add(Polyline(
+        polylineId: PolylineId('${lineCode}_base'),
+        points: basePoints,
+        color: const Color(0xFFFF9F1C),
+        width: 6,
+      ));
+
+      double startM = LineCalculator.parseKmToMeters(
+          data["startKm"]?.toString() ?? "0+000");
+      double kaziM =
+          LineCalculator.parseKmToMeters(data["kaziKm"]?.toString() ?? "0+000");
+      double yataklamaM = LineCalculator.parseKmToMeters(
+          data["yataklamaKm"]?.toString() ?? "0+000");
+      double montajM = LineCalculator.parseKmToMeters(
+          data["montajKm"]?.toString() ?? "0+000");
+      double kapamaM = LineCalculator.parseKmToMeters(
+          data["kapamaKm"]?.toString() ?? "0+000");
+
+      List<LatLng> kaziPts =
+          LineCalculator.getSubPolyline(basePoints, startM, kaziM);
+      if (kaziPts.isNotEmpty) {
+        newPolylines.add(Polyline(
+          polylineId: PolylineId('${lineCode}_kazi'),
+          points: kaziPts,
+          color: const Color(0xFFE71D36),
+          width: 8,
+        ));
+      }
+
+      List<LatLng> yataklamaPts =
+          LineCalculator.getSubPolyline(basePoints, startM, yataklamaM);
+      if (yataklamaPts.isNotEmpty) {
+        newPolylines.add(Polyline(
+          polylineId: PolylineId('${lineCode}_yataklama'),
+          points: yataklamaPts,
+          color: const Color(0xFFFF9F1C),
+          width: 7,
+        ));
+      }
+
+      List<LatLng> montajPts =
+          LineCalculator.getSubPolyline(basePoints, startM, montajM);
+      if (montajPts.isNotEmpty) {
+        newPolylines.add(Polyline(
+          polylineId: PolylineId('${lineCode}_montaj'),
+          points: montajPts,
+          color: const Color(0xFF2EC4B6),
+          width: 6,
+        ));
+      }
+
+      List<LatLng> kapamaPts =
+          LineCalculator.getSubPolyline(basePoints, startM, kapamaM);
+      if (kapamaPts.isNotEmpty) {
+        newPolylines.add(Polyline(
+          polylineId: PolylineId('${lineCode}_kapama'),
+          points: kapamaPts,
+          color: const Color(0xFF20A4F3),
+          width: 5,
+        ));
+      }
+
+      List<dynamic> sanatYapitlari = data["sanatYapitlari"] ?? [];
+      for (int i = 0; i < sanatYapitlari.length; i++) {
+        var yapi = sanatYapitlari[i];
+
+        double? lat = double.tryParse(yapi["lat"]?.toString() ?? '');
+        double? lng = double.tryParse(yapi["lng"]?.toString() ?? '');
+        LatLng? point;
+
+        if (lat != null && lng != null) {
+          point = LatLng(lat, lng);
+        } else {
+          double yapiMeters =
+              LineCalculator.parseKmToMeters(yapi["km"]?.toString() ?? "0");
+          point = LineCalculator.getPointAtDistance(basePoints, yapiMeters);
+        }
+
+        if (point != null) {
+          bool isCompleted =
+              yapi["status"] == "Tamamlandı" || yapi["durum"] == "Tamamlandı";
+          String type = yapi["type"] ?? yapi["tip"] ?? "Yapı";
+          String feature = yapi["feature"] ?? "";
+          String diameter = yapi["diameter"] ?? "";
+          double rotation =
+              double.tryParse(yapi["rotation"]?.toString() ?? '0') ?? 0.0;
+
+          BitmapDescriptor autoIcon = await DynamicIconGenerator.createAutoIcon(
+            type: type,
+            feature: feature,
+            diameter: diameter,
+            isCompleted: isCompleted,
+          );
+
+          String subtitleDetails = [
+            if (feature.isNotEmpty) feature,
+            if (diameter.isNotEmpty) diameter,
+          ].join(' - ');
+
+          newMarkers.add(Marker(
+            markerId: MarkerId('${lineCode}_sanat_$i'),
+            position: point,
+            rotation: rotation,
+            icon: autoIcon,
+            infoWindow: InfoWindow(
+              title: "${yapi["name"] ?? type} ($lineCode)",
+              snippet:
+                  "Km: ${yapi["km"] ?? "0+000"} | $type ${subtitleDetails.isNotEmpty ? '($subtitleDetails)' : ''}",
+            ),
+          ));
+        }
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _loadedLineCount = docs.length;
+        _totalCoordinateCount = totalPts;
+        _statusMessage =
+            "✅ $_loadedLineCount Hat • ${newMarkers.length} Yapı Çizildi";
+        _availableLineCodes.clear();
+        _availableLineCodes.addAll(codes.toSet().toList()..sort());
+        _dinamikPolylineHatlari.clear();
+        _dinamikPolylineHatlari.addAll(newPolylines);
+        _sahaElemaniMarkers.clear();
+        _sahaElemaniMarkers.addAll(newMarkers);
+      });
+
+      if (!_haritaOdaklandi &&
+          _mapController != null &&
+          minLat != null &&
+          minLon != null) {
+        _haritaOdaklandi = true;
+        _mapController!.animateCamera(
+          CameraUpdate.newLatLngBounds(
+            LatLngBounds(
+              southwest: LatLng(minLat, minLon),
+              northeast: LatLng(maxLat!, maxLon!),
+            ),
+            60,
+          ),
+        );
+      }
+    }
+  }
+
+  void _startMainProjectFallbackListener() {
+    _mainProjectSubscription?.cancel();
+    _mainProjectSubscription = FirebaseFirestore.instance
         .collection('projects')
         .doc(widget.activeProjectDocId)
         .snapshots()
         .listen((snapshot) {
       if (!snapshot.exists || snapshot.data() == null) return;
-
       var data = snapshot.data() as Map<String, dynamic>;
-      double startM =
-          LineCalculator.parseKmToMeters(data["startKm"] ?? "12+000.00");
-      double kaziM = LineCalculator.parseKmToMeters(
-          data["kaziKm"] ?? data["startKm"] ?? "12+000.00");
-      double yataklamaM = LineCalculator.parseKmToMeters(
-          data["yataklamaKm"] ?? data["startKm"] ?? "12+000.00");
-      double montajM = LineCalculator.parseKmToMeters(
-          data["montajKm"] ?? data["startKm"] ?? "12+000.00");
-      double kapamaM = LineCalculator.parseKmToMeters(
-          data["kapamaKm"] ?? data["startKm"] ?? "12+000.00");
 
-      Set<Polyline> newPolylines = {};
       String primaryLineKey = _rawLineGeometries.keys.isNotEmpty
           ? _rawLineGeometries.keys.first
           : 'S2';
+      if (!_rawLineGeometries.containsKey(primaryLineKey)) return;
 
-      if (_rawLineGeometries.containsKey(primaryLineKey)) {
-        List<LatLng> basePoints = _rawLineGeometries[primaryLineKey]!;
+      List<LatLng> basePoints = _rawLineGeometries[primaryLineKey]!;
+      double startM =
+          LineCalculator.parseKmToMeters(data["startKm"] ?? "0+000");
+      double kaziM = LineCalculator.parseKmToMeters(data["kaziKm"] ?? "0+000");
+      double yataklamaM =
+          LineCalculator.parseKmToMeters(data["yataklamaKm"] ?? "0+000");
+      double montajM =
+          LineCalculator.parseKmToMeters(data["montajKm"] ?? "0+000");
+      double kapamaM =
+          LineCalculator.parseKmToMeters(data["kapamaKm"] ?? "0+000");
 
-        // 1. Kazı (Kırmızı / Kalınlık: 10)
-        List<LatLng> kaziPts =
-            LineCalculator.getSubPolyline(basePoints, startM, kaziM);
-        if (kaziPts.isNotEmpty) {
-          newPolylines.add(Polyline(
-            polylineId: const PolylineId('phase_kazi'),
-            points: kaziPts,
-            color: const Color(0xFFE71D36),
-            width: 10,
-          ));
-        }
+      Set<Polyline> newPolylines = {};
 
-        // 2. Çakıl Yataklama (Sarı / Kalınlık: 8)
-        List<LatLng> yataklamaPts =
-            LineCalculator.getSubPolyline(basePoints, startM, yataklamaM);
-        if (yataklamaPts.isNotEmpty) {
-          newPolylines.add(Polyline(
-            polylineId: const PolylineId('phase_yataklama'),
-            points: yataklamaPts,
-            color: const Color(0xFFFF9F1C),
-            width: 8,
-          ));
-        }
+      newPolylines.add(Polyline(
+        polylineId: const PolylineId('phase_base'),
+        points: basePoints,
+        color: const Color(0xFFFF9F1C),
+        width: 6,
+      ));
 
-        // 3. Boru Montajı (Cyan-Yeşil / Kalınlık: 6)
-        List<LatLng> montajPts =
-            LineCalculator.getSubPolyline(basePoints, startM, montajM);
-        if (montajPts.isNotEmpty) {
-          newPolylines.add(Polyline(
-            polylineId: const PolylineId('phase_montaj'),
-            points: montajPts,
-            color: const Color(0xFF2EC4B6),
-            width: 6,
-          ));
-        }
-
-        // 4. Geri Dolgu / Kapama (Mavi / Kalınlık: 4)
-        List<LatLng> kapamaPts =
-            LineCalculator.getSubPolyline(basePoints, startM, kapamaM);
-        if (kapamaPts.isNotEmpty) {
-          newPolylines.add(Polyline(
-            polylineId: const PolylineId('phase_kapama'),
-            points: kapamaPts,
-            color: const Color(0xFF20A4F3),
-            width: 4,
-          ));
-        }
+      List<LatLng> kaziPts =
+          LineCalculator.getSubPolyline(basePoints, startM, kaziM);
+      if (kaziPts.isNotEmpty) {
+        newPolylines.add(Polyline(
+          polylineId: const PolylineId('phase_kazi'),
+          points: kaziPts,
+          color: const Color(0xFFE71D36),
+          width: 10,
+        ));
       }
 
-      // SANAT YAPILARI / MARKER CANLI SENKRONİZASYONU
-      Set<Marker> newMarkers = {};
-      List<dynamic> sanatYapitlari = data["sanatYapitlari"] ?? [];
+      List<LatLng> yataklamaPts =
+          LineCalculator.getSubPolyline(basePoints, startM, yataklamaM);
+      if (yataklamaPts.isNotEmpty) {
+        newPolylines.add(Polyline(
+          polylineId: const PolylineId('phase_yataklama'),
+          points: yataklamaPts,
+          color: const Color(0xFFFF9F1C),
+          width: 8,
+        ));
+      }
 
-      for (int i = 0; i < sanatYapitlari.length; i++) {
-        var yapi = sanatYapitlari[i];
-        double yapiMeters =
-            LineCalculator.parseKmToMeters(yapi["km"]?.toString() ?? "0");
+      List<LatLng> montajPts =
+          LineCalculator.getSubPolyline(basePoints, startM, montajM);
+      if (montajPts.isNotEmpty) {
+        newPolylines.add(Polyline(
+          polylineId: const PolylineId('phase_montaj'),
+          points: montajPts,
+          color: const Color(0xFF2EC4B6),
+          width: 6,
+        ));
+      }
 
-        if (_rawLineGeometries.containsKey(primaryLineKey)) {
-          LatLng? point = LineCalculator.getPointAtDistance(
-              _rawLineGeometries[primaryLineKey]!, yapiMeters);
-
-          if (point != null) {
-            bool isCompleted = yapi["durum"] == "Tamamlandı";
-            double iconHue = isCompleted
-                ? BitmapDescriptor.hueGreen
-                : BitmapDescriptor.hueOrange;
-
-            newMarkers.add(Marker(
-              markerId: MarkerId('sanat_$i'),
-              position: point,
-              icon: BitmapDescriptor.defaultMarkerWithHue(iconHue),
-              infoWindow: InfoWindow(
-                title: "${yapi["tip"]} (${yapi["durum"]})",
-                snippet: "Km: ${yapi["km"]} | Beton: ${yapi["beton"]}",
-              ),
-            ));
-          }
-        }
+      List<LatLng> kapamaPts =
+          LineCalculator.getSubPolyline(basePoints, startM, kapamaM);
+      if (kapamaPts.isNotEmpty) {
+        newPolylines.add(Polyline(
+          polylineId: const PolylineId('phase_kapama'),
+          points: kapamaPts,
+          color: const Color(0xFF20A4F3),
+          width: 5,
+        ));
       }
 
       if (mounted) {
         setState(() {
           _dinamikPolylineHatlari.clear();
           _dinamikPolylineHatlari.addAll(newPolylines);
-          _sahaElemaniMarkers.clear();
-          _sahaElemaniMarkers.addAll(newMarkers);
         });
       }
     });
@@ -458,6 +719,18 @@ class _HaritaSayfasiState extends State<HaritaSayfasi> {
         foregroundColor: Colors.white,
         centerTitle: true,
         actions: [
+          // 👁️ SANAT YAPILARINI TEK TIKLA GÖSTER / GİZLE BUTONU
+          IconButton(
+            icon: Icon(
+              _showSanatYapitlari ? Icons.visibility : Icons.visibility_off,
+              color:
+                  _showSanatYapitlari ? const Color(0xFFFF9F1C) : Colors.grey,
+            ),
+            tooltip: _showSanatYapitlari ? "Yapıları Gizle" : "Yapıları Göster",
+            onPressed: () {
+              setState(() => _showSanatYapitlari = !_showSanatYapitlari);
+            },
+          ),
           IconButton(
             icon: Icon(
               _isKmlVisible ? Icons.layers : Icons.layers_clear,
@@ -487,47 +760,124 @@ class _HaritaSayfasiState extends State<HaritaSayfasi> {
         children: [
           GoogleMap(
             initialCameraPosition: const CameraPosition(
-              target: LatLng(38.7205, 35.4826),
-              zoom: 6,
+              target: LatLng(38.35, 35.35),
+              zoom: 12,
             ),
             mapType: MapType.hybrid,
-            markers: _sahaElemaniMarkers,
+            markers: _showSanatYapitlari ? _sahaElemaniMarkers : <Marker>{},
             polylines: _dinamikPolylineHatlari,
             tileOverlays: _isKmlVisible ? _tileOverlays : <TileOverlay>{},
-            onMapCreated: (c) => _mapController = c,
+            onMapCreated: (c) {
+              _mapController = c;
+              _loadGokboruEngine();
+            },
             myLocationEnabled: _konumAktif,
             myLocationButtonEnabled: false,
           ),
-          if (_isLoading)
-            Positioned(
-              top: 15,
-              left: 15,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.85),
-                  borderRadius: BorderRadius.circular(20),
+          Positioned(
+            top: 12,
+            left: 12,
+            right: 12,
+            child: Column(
+              children: [
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.9),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFFFF9F1C)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          "📌 Proje ID: ${widget.activeProjectDocId}\n$_statusMessage ($_totalCoordinateCount Nokta)",
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      Row(
+                        children: [
+                          OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFFFF9F1C),
+                              side: const BorderSide(color: Color(0xFFFF9F1C)),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 2),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            onPressed: _pickAndUploadExcel,
+                            icon: const Icon(Icons.table_chart, size: 14),
+                            label: const Text("EXCEL YÜKLE",
+                                style: TextStyle(
+                                    fontSize: 10, fontWeight: FontWeight.bold)),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.refresh,
+                                color: Color(0xFFFF9F1C), size: 20),
+                            onPressed: _loadGokboruEngine,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-                child: const Row(
-                  children: [
-                    SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(
-                        color: Color(0xFFFF9F1C),
-                        strokeWidth: 2,
+                if (_availableLineCodes.isNotEmpty) const SizedBox(height: 6),
+                if (_availableLineCodes.isNotEmpty)
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.85),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white24),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String?>(
+                        value: _selectedLineCode,
+                        dropdownColor: const Color(0xFF1E2638),
+                        isExpanded: true,
+                        icon: const Icon(Icons.tune, color: Color(0xFFFF9F1C)),
+                        hint: Text(
+                          "🌐 Tüm Şebekeyi Göster (${_availableLineCodes.length} Hat)",
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold),
+                        ),
+                        items: [
+                          const DropdownMenuItem<String?>(
+                            value: null,
+                            child: Text("🌐 Tüm Şebekeyi Göster",
+                                style: TextStyle(
+                                    color: Color(0xFFFF9F1C),
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13)),
+                          ),
+                          ..._availableLineCodes.map((code) {
+                            return DropdownMenuItem<String?>(
+                              value: code,
+                              child: Text("📍 Hat: $code",
+                                  style: const TextStyle(
+                                      color: Colors.white, fontSize: 13)),
+                            );
+                          }),
+                        ],
+                        onChanged: (val) {
+                          setState(() => _selectedLineCode = val);
+                          _startCanliProjeDinleyicisi();
+                        },
                       ),
                     ),
-                    SizedBox(width: 10),
-                    Text(
-                      "Gökbörü Tile Engine Çiziyor...",
-                      style: TextStyle(color: Colors.white, fontSize: 12),
-                    ),
-                  ],
-                ),
-              ),
+                  ),
+              ],
             ),
+          ),
         ],
       ),
       floatingActionButton: FloatingActionButton(
