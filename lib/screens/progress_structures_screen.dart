@@ -69,7 +69,9 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
         );
       }
     } finally {
-      if (mounted) setState(() => _isUploading = false);
+      if (mounted) {
+        setState(() => _isUploading = false);
+      }
     }
   }
 
@@ -85,7 +87,8 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
       if (result != null && result.files.isNotEmpty) {
         setState(() {
           _isUploading = true;
-          _uploadStatusText = "Excel Dosyası Ayrıştırılıyor...";
+          _uploadStatusText =
+              "Excel Dosyası Ayrıştırılıyor ve Klasörleniyor...";
         });
 
         var file = result.files.first;
@@ -99,7 +102,7 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
-                    "🎉 Toplam $count adet Sanat Yapısı / Branşman eklendi!"),
+                    "🎉 Toplam $count adet Sanat Yapısı hat klasörlerine aktarıldı!"),
                 backgroundColor: Colors.green,
               ),
             );
@@ -115,23 +118,25 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
         );
       }
     } finally {
-      if (mounted) setState(() => _isUploading = false);
+      if (mounted) {
+        setState(() => _isUploading = false);
+      }
     }
   }
 
-  // ➕ Yeni Sanat Yapısı / Branşman Ekleme Penceresi (Excel + Manuel)
-  void _showAddStructureDialog(PipeLine line) {
+  // ➕ Yeni Sanat Yapısı Ekleme Modal Penceresi (Manuel + Excel)
+  void _showAddStructureDialog(PipeLine currentLine) {
     final nameCtrl = TextEditingController();
-    final kmCtrl = TextEditingController();
-    final concreteCtrl = TextEditingController();
+    final kmCtrl = TextEditingController(text: "0+120.00");
     final featureCtrl = TextEditingController();
     final diameterCtrl = TextEditingController();
-    String selectedType = "Vantuz";
+    final hatKoduCtrl = TextEditingController(text: currentLine.code);
+    String selectedType = "Hidrant";
 
     final List<String> structureTypes = [
+      "Hidrant",
       "Vantuz",
       "Tahliye Vanası",
-      "Hidrant",
       "Vana Odası",
       "Branşman",
       "Sayaç Odası",
@@ -149,7 +154,7 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
       builder: (ctx) => StatefulBuilder(
         builder: (context, setModalState) => Padding(
           padding: EdgeInsets.only(
-            top: 12,
+            top: 16,
             left: 16,
             right: 16,
             bottom: MediaQuery.of(context).viewInsets.bottom + 20,
@@ -179,7 +184,7 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // 🟢 EXCEL ILE TOPLU YÜKLEME BUTONU
+                // 📊 EXCEL İLE TOPLU YÜKLE
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF2EC4B6),
@@ -216,29 +221,17 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                const Text("Yapı Tipi Seçin:",
-                    style: TextStyle(color: Colors.grey, fontSize: 13)),
-                const SizedBox(height: 6),
-                DropdownButtonFormField<String>(
-                  initialValue: selectedType,
-                  dropdownColor: const Color(0xFF1E2638),
+                TextField(
+                  controller: hatKoduCtrl,
                   style: const TextStyle(
                       color: Colors.white, fontWeight: FontWeight.bold),
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: const Color(0xFF0E1420),
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: BorderSide.none),
+                  decoration: const InputDecoration(
+                    labelText: "Hat Kodu (Örn: S2-1, S2-2)",
+                    labelStyle: TextStyle(color: Colors.grey),
+                    border: OutlineInputBorder(),
                   ),
-                  items: structureTypes
-                      .map((t) => DropdownMenuItem(value: t, child: Text(t)))
-                      .toList(),
-                  onChanged: (val) {
-                    if (val != null) setModalState(() => selectedType = val);
-                  },
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
 
                 Row(
                   children: [
@@ -246,15 +239,10 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
                       child: TextField(
                         controller: nameCtrl,
                         style: const TextStyle(color: Colors.white),
-                        decoration: InputDecoration(
-                          labelText: "Yapı No / Tanım (Örn: V-12)",
-                          labelStyle:
-                              const TextStyle(color: Colors.grey, fontSize: 12),
-                          filled: true,
-                          fillColor: const Color(0xFF0E1420),
-                          border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(10),
-                              borderSide: BorderSide.none),
+                        decoration: const InputDecoration(
+                          labelText: "Yapı Adı (Örn: SAV-1)",
+                          labelStyle: TextStyle(color: Colors.grey),
+                          border: OutlineInputBorder(),
                         ),
                       ),
                     ),
@@ -263,37 +251,64 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
                       child: TextField(
                         controller: kmCtrl,
                         style: const TextStyle(color: Colors.white),
-                        decoration: InputDecoration(
+                        decoration: const InputDecoration(
                           labelText: "Kilometraj (Km)",
-                          labelStyle:
-                              const TextStyle(color: Colors.grey, fontSize: 12),
-                          filled: true,
-                          fillColor: const Color(0xFF0E1420),
-                          border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(10),
-                              borderSide: BorderSide.none),
+                          labelStyle: TextStyle(color: Colors.grey),
+                          border: OutlineInputBorder(),
                         ),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
 
-                TextField(
-                  controller: concreteCtrl,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  style: const TextStyle(color: Colors.white),
-                  decoration: InputDecoration(
-                    labelText: "Beton Miktarı (m³)",
-                    labelStyle:
-                        const TextStyle(color: Colors.grey, fontSize: 12),
-                    filled: true,
-                    fillColor: const Color(0xFF0E1420),
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: BorderSide.none),
+                DropdownButtonFormField<String>(
+                  initialValue: selectedType,
+                  dropdownColor: const Color(0xFF1E2638),
+                  style: const TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.bold),
+                  decoration: const InputDecoration(
+                    labelText: "Yapı Türü",
+                    labelStyle: TextStyle(color: Colors.grey),
+                    border: OutlineInputBorder(),
                   ),
+                  items: structureTypes
+                      .map((t) => DropdownMenuItem(value: t, child: Text(t)))
+                      .toList(),
+                  onChanged: (val) {
+                    if (val != null) {
+                      setModalState(() => selectedType = val);
+                    }
+                  },
+                ),
+                const SizedBox(height: 10),
+
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: featureCtrl,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: const InputDecoration(
+                          labelText: "Özellik (Örn: Çift Çıkışlı)",
+                          labelStyle: TextStyle(color: Colors.grey),
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        controller: diameterCtrl,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: const InputDecoration(
+                          labelText: "Çap (Örn: DN80)",
+                          labelStyle: TextStyle(color: Colors.grey),
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 20),
 
@@ -306,33 +321,43 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
                         borderRadius: BorderRadius.circular(10)),
                   ),
                   onPressed: () async {
-                    if (nameCtrl.text.trim().isEmpty) return;
+                    String targetHat = hatKoduCtrl.text.trim().isEmpty
+                        ? currentLine.code
+                        : hatKoduCtrl.text.trim();
+                    if (nameCtrl.text.trim().isEmpty) {
+                      return;
+                    }
 
                     Map<String, dynamic> newStructure = {
                       'id': DateTime.now().millisecondsSinceEpoch.toString(),
+                      'hatKodu': targetHat,
                       'name': nameCtrl.text.trim(),
                       'km': kmCtrl.text.trim().isEmpty
                           ? "0+000"
                           : kmCtrl.text.trim(),
                       'type': selectedType,
-                      'concreteAmount': concreteCtrl.text.trim(),
                       'feature': featureCtrl.text.trim(),
                       'diameter': diameterCtrl.text.trim(),
                       'status': 'Bekliyor',
                       'createdAt': DateTime.now().toIso8601String(),
                     };
 
+                    String docId =
+                        targetHat.replaceAll(' ', '_').replaceAll('/', '-');
+
                     await _firestore
                         .collection('projects')
                         .doc(widget.activeProjectId)
                         .collection('lines')
-                        .doc(line.id)
-                        .update({
+                        .doc(docId)
+                        .set({
                       'sanatYapitlari': FieldValue.arrayUnion([newStructure]),
                       'updatedAt': FieldValue.serverTimestamp(),
-                    });
+                    }, SetOptions(merge: true));
 
-                    if (context.mounted) Navigator.pop(context);
+                    if (context.mounted) {
+                      Navigator.pop(context);
+                    }
                   },
                   child: const Text("PROJEYE EKLE VE YAYINLA",
                       style:
@@ -413,7 +438,9 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
                     'updatedAt': FieldValue.serverTimestamp(),
                   });
 
-                  if (ctx.mounted) Navigator.pop(ctx);
+                  if (ctx.mounted) {
+                    Navigator.pop(ctx);
+                  }
                 },
                 child: const Text("KAYDET VE GÜNCELLE",
                     style: TextStyle(fontWeight: FontWeight.bold)),
@@ -478,23 +505,20 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
                         d.data() as Map<String, dynamic>, d.id))
                     .toList();
 
-                if (allLines.isEmpty) return _buildEmptyState();
-
-                PipeLine? currentLine;
-                if (_selectedLineId != null) {
-                  currentLine = allLines.firstWhere(
-                    (l) => l.id == _selectedLineId,
-                    orElse: () => allLines.first,
-                  );
-                } else {
-                  currentLine = allLines.first;
+                if (allLines.isEmpty) {
+                  return _buildEmptyState();
                 }
+
+                PipeLine currentLine = allLines.firstWhere(
+                  (l) => l.id == _selectedLineId,
+                  orElse: () => allLines.first,
+                );
 
                 return Column(
                   children: [
                     _buildDetailHeader(allLines, currentLine),
                     Expanded(
-                      child: _buildLineDetailView(currentLine),
+                      child: _buildLineDetailView(allLines, currentLine),
                     ),
                   ],
                 );
@@ -532,7 +556,9 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
               );
             }).toList(),
             onChanged: (newId) {
-              if (newId != null) setState(() => _selectedLineId = newId);
+              if (newId != null) {
+                setState(() => _selectedLineId = newId);
+              }
             },
           ),
         ),
@@ -540,7 +566,7 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
     );
   }
 
-  Widget _buildLineDetailView(PipeLine line) {
+  Widget _buildLineDetailView(List<PipeLine> allLines, PipeLine activeLine) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -550,7 +576,7 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                "Hat İlerleme Durumu (${line.pipeType})",
+                "Hat İlerleme Durumu (${activeLine.pipeType})",
                 style: const TextStyle(
                     color: Colors.white,
                     fontSize: 15,
@@ -558,19 +584,19 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
               ),
               IconButton(
                 icon: const Icon(Icons.edit, color: Color(0xFFFF9F1C)),
-                onPressed: () => _editProgressDialog(line),
+                onPressed: () => _editProgressDialog(activeLine),
               ),
             ],
           ),
           const SizedBox(height: 10),
-          _buildStageCard(
-              "1. Kazı Aşaması", line.kaziKm, line.totalKm, Colors.redAccent),
-          _buildStageCard("2. Çakıl Yataklama", line.yataklamaKm, line.totalKm,
-              Colors.orangeAccent),
-          _buildStageCard("3. Boru Montajı", line.montajKm, line.totalKm,
-              const Color(0xFF2EC4B6)),
-          _buildStageCard("4. Geri Dolgu / Kapama", line.kapamaKm, line.totalKm,
-              Colors.blueAccent),
+          _buildStageCard("1. Kazı Aşaması", activeLine.kaziKm,
+              activeLine.totalKm, Colors.redAccent),
+          _buildStageCard("2. Çakıl Yataklama", activeLine.yataklamaKm,
+              activeLine.totalKm, Colors.orangeAccent),
+          _buildStageCard("3. Boru Montajı", activeLine.montajKm,
+              activeLine.totalKm, const Color(0xFF2EC4B6)),
+          _buildStageCard("4. Geri Dolgu / Kapama", activeLine.kapamaKm,
+              activeLine.totalKm, Colors.blueAccent),
           const SizedBox(height: 24),
 
           // 📌 SANAT YAPILARI BAŞLIĞI VE + EKLE BUTONU
@@ -585,7 +611,7 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
                     fontWeight: FontWeight.bold),
               ),
               InkWell(
-                onTap: () => _showAddStructureDialog(line),
+                onTap: () => _showAddStructureDialog(activeLine),
                 child: const Row(
                   children: [
                     Icon(Icons.add_circle, color: Color(0xFFFF9F1C), size: 18),
@@ -603,61 +629,196 @@ class _ProgressStructuresScreenState extends State<ProgressStructuresScreen> {
             ],
           ),
           const SizedBox(height: 12),
-          if (line.sanatYapitlari.isEmpty)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 30, horizontal: 16),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1E2638).withValues(alpha: 0.5),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white10),
+
+          // 📁 TÜM HATLARIN SANAT YAPILARINI HAT KODLARINA GÖRE KLASÖRLÜ LİSTELEME
+          _buildGroupedStructuresView(allLines),
+        ],
+      ),
+    );
+  }
+
+  /// 📁 Hat Koduna (S2-1, S2-2 vb.) Göre Gruplanmış Akordeon Klasör Widget'ı
+  Widget _buildGroupedStructuresView(List<PipeLine> lines) {
+    Map<String, List<Map<String, dynamic>>> groupedData = {};
+
+    for (var line in lines) {
+      String lineCode = line.code.trim().isEmpty ? "S2-1" : line.code.trim();
+
+      if (!groupedData.containsKey(lineCode)) {
+        groupedData[lineCode] = [];
+      }
+
+      for (var sy in line.sanatYapitlari) {
+        Map<String, dynamic> item = Map<String, dynamic>.from(sy);
+        String hatKey = item["hatKodu"]?.toString().trim() ?? lineCode;
+        if (hatKey.isEmpty) {
+          hatKey = lineCode;
+        }
+
+        if (!groupedData.containsKey(hatKey)) {
+          groupedData[hatKey] = [];
+        }
+        groupedData[hatKey]!.add(item);
+      }
+    }
+
+    if (groupedData.isEmpty || groupedData.values.every((l) => l.isEmpty)) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 30, horizontal: 16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E2638).withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white10),
+        ),
+        child: const Text(
+          "Henüz eklenmiş bir sanat yapısı veya branşman yok.\nYukarıdaki + EKLE butonunu kullanarak Excel yükleyebilirsiniz.",
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.grey, fontSize: 13),
+        ),
+      );
+    }
+
+    List<String> sortedHatKeys = groupedData.keys.toList();
+
+    return ListView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: sortedHatKeys.length,
+      itemBuilder: (context, index) {
+        String hatKodu = sortedHatKeys[index];
+        List<Map<String, dynamic>> items = groupedData[hatKodu]!;
+
+        if (items.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        return Card(
+          color: const Color(0xFF1E2638),
+          margin: const EdgeInsets.only(bottom: 10),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: const BorderSide(color: Colors.white12),
+          ),
+          child: Theme(
+            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+            child: ExpansionTile(
+              initiallyExpanded:
+                  false, // 👈 KAPALI OLARAK BAŞLAR; TIKLANDIĞINDA İÇERİĞİ AÇILIR
+              leading:
+                  const Icon(Icons.folder, color: Color(0xFFFF9F1C), size: 28),
+              title: Text(
+                "📁 $hatKodu Hattı Klasörü",
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                ),
               ),
-              child: const Text(
-                "Henüz eklenmiş bir sanat yapısı veya branşman yok.",
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey, fontSize: 13),
+              subtitle: Text(
+                "Toplam ${items.length} Adet Yapı (SAV / HV)",
+                style: const TextStyle(color: Colors.grey, fontSize: 11),
               ),
-            )
-          else
-            Column(
-              children: line.sanatYapitlari.map((sy) {
-                return Card(
-                  color: const Color(0xFF1E2638),
-                  margin: const EdgeInsets.only(bottom: 8),
+              trailing: const Icon(Icons.keyboard_arrow_down,
+                  color: Color(0xFFFF9F1C)),
+              children: items.map((sy) {
+                String name = sy["name"] ?? sy["tip"] ?? "Yapı";
+                String km = sy["km"] ?? "0+000";
+                String type = sy["type"] ?? sy["tip"] ?? "Yapı";
+                String feature = sy["feature"] ?? "";
+                String diameter = sy["diameter"] ?? "";
+                String status = sy["status"] ?? sy["durum"] ?? "Bekliyor";
+
+                String descText = "Km: $km";
+                if (type.isNotEmpty && type != name) {
+                  descText += " | Tür: $type";
+                }
+                if (feature.isNotEmpty || diameter.isNotEmpty) {
+                  List<String> details = [feature, diameter]
+                      .where((element) => element.isNotEmpty)
+                      .toList();
+                  descText += " (${details.join(" - ")})";
+                }
+
+                return Container(
+                  margin:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF121824),
+                    borderRadius: BorderRadius.circular(10),
+                    border:
+                        Border.all(color: Colors.white.withValues(alpha: 0.05)),
+                  ),
                   child: ListTile(
-                    leading: const Icon(Icons.settings_input_component,
-                        color: Color(0xFFFF9F1C)),
+                    leading: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFF9F1C).withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(Icons.warning_amber_rounded,
+                          color: Color(0xFFFF9F1C), size: 20),
+                    ),
                     title: Text(
-                      "${sy["name"] ?? "Yapı"} - ${sy["type"] ?? ""}",
+                      name,
                       style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold),
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                     subtitle: Text(
-                      "Km: ${sy["km"] ?? "0+000"} • Özellik: ${sy["feature"] ?? "-"} ${sy["diameter"] != null && sy["diameter"].isNotEmpty ? '(${sy["diameter"]})' : ''}",
+                      descText,
                       style: const TextStyle(color: Colors.grey, fontSize: 11),
                     ),
-                    trailing: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                          color: Colors.green.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(6)),
-                      child: Text(
-                        sy["status"] ?? "Bekliyor",
-                        style: const TextStyle(
-                            color: Colors.green,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold),
-                      ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color:
+                                const Color(0xFFFF9F1C).withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            status,
+                            style: const TextStyle(
+                              color: Color(0xFFFF9F1C),
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline,
+                              color: Colors.redAccent, size: 20),
+                          onPressed: () async {
+                            String docId = hatKodu
+                                .replaceAll(' ', '_')
+                                .replaceAll('/', '-');
+                            await _firestore
+                                .collection('projects')
+                                .doc(widget.activeProjectId)
+                                .collection('lines')
+                                .doc(docId)
+                                .update({
+                              'sanatYapitlari': FieldValue.arrayRemove([sy]),
+                              'updatedAt': FieldValue.serverTimestamp(),
+                            });
+                          },
+                        ),
+                      ],
                     ),
                   ),
                 );
               }).toList(),
             ),
-        ],
-      ),
+          ),
+        );
+      },
     );
   }
 

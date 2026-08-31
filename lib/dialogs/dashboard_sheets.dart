@@ -1,9 +1,12 @@
-import 'package:excel/excel.dart';
+// lib/dialogs/dashboard_sheets.dart
+
+import 'package:excel/excel.dart' hide Border;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+/// 🔍 Excel Hücre Verisini Güvenli Okuma Yardımcısı
 String _getCellValue(List<Data?> row, int index) {
   if (index >= row.length || row[index] == null || row[index]?.value == null) {
     return "";
@@ -11,6 +14,7 @@ String _getCellValue(List<Data?> row, int index) {
   return row[index]!.value.toString().trim();
 }
 
+/// 📝 Genel Giriş Kutusu Widget'ı
 Widget buildInputField(String label, TextEditingController controller,
     {bool isNumber = false}) {
   return TextField(
@@ -32,6 +36,7 @@ Widget buildInputField(String label, TextEditingController controller,
   );
 }
 
+/// 🌟 VIP Promosyon / Davet Kodu Dialogu
 void showVipCodeDialog(
     BuildContext context, bool isProUser, Function(bool) onSuccess) {
   final codeCtrl = TextEditingController();
@@ -124,6 +129,7 @@ void showVipCodeDialog(
   );
 }
 
+/// 🏗️ Şantiye Kodu Seçim/Bağlantı Penceresi
 void showProjectSelectorSheet(
     BuildContext context, Function(String) onCodeSelected) {
   final customCodeCtrl = TextEditingController();
@@ -194,18 +200,27 @@ void showProjectSelectorSheet(
   );
 }
 
+/// 📌 Sanat Yapısı / Branşman Ekleme Penceresi (Excel + Manuel + 31 Hat İçin Akıllı Klasörleme)
 void showAddStructureSheet(BuildContext context,
     Map<String, dynamic> activeProj, Function(Map<String, dynamic>) onSave) {
-  String selectedType = "Vantuz";
+  String defaultHatCode =
+      (activeProj["code"] ?? activeProj["name"] ?? "S2-1").toString().trim();
+  if (defaultHatCode.isEmpty) {
+    defaultHatCode = "S2-1";
+  }
+
+  String selectedType = "Hidrant";
+  final hatKoduCtrl = TextEditingController(text: defaultHatCode);
   final kmCtrl =
-      TextEditingController(text: activeProj["montajKm"] ?? "12+000.00");
-  final numberCtrl = TextEditingController();
-  final betonCtrl = TextEditingController(text: "3.5");
+      TextEditingController(text: activeProj["montajKm"] ?? "0+120.00");
+  final numberCtrl = TextEditingController(); // Yapı Adı (SAV-1)
+  final featureCtrl = TextEditingController(); // Özellik (Çift Çıkışlı)
+  final diameterCtrl = TextEditingController(); // Çap (DN80)
 
   List<String> typeOptions = [
+    "Hidrant",
     "Vantuz",
     "Tahliye Vanası",
-    "Hidrant",
     "Vana Odası",
     "Branşman",
     "Sayaç Odası",
@@ -270,28 +285,78 @@ void showAddStructureSheet(BuildContext context,
 
                           for (var table in excel.tables.keys) {
                             final sheet = excel.tables[table];
-                            if (sheet == null || sheet.rows.isEmpty) continue;
+                            if (sheet == null || sheet.rows.isEmpty) {
+                              continue;
+                            }
 
                             for (int i = 1; i < sheet.rows.length; i++) {
                               final row = sheet.rows[i];
-                              if (row.isEmpty) continue;
-
-                              String nameOrType = _getCellValue(row, 0);
-                              String kmVal = _getCellValue(row, 1);
-                              String betonVal =
-                                  row.length > 2 ? _getCellValue(row, 2) : "0";
-
-                              if (nameOrType.isNotEmpty) {
-                                currentList.add({
-                                  "tip": nameOrType,
-                                  "km": kmVal.isEmpty ? "0+000" : kmVal,
-                                  "beton": betonVal.endsWith("m³")
-                                      ? betonVal
-                                      : "$betonVal m³",
-                                  "durum": "Bekliyor",
-                                });
-                                addedCount++;
+                              if (row.isEmpty) {
+                                continue;
                               }
+
+                              // Excel Tablo Sütunları:
+                              // A (0): Hat Kodu (S2-1, S2-2 vb.)
+                              // B (1): Metraj (Km) (0+120.00)
+                              // C (2): Yapı Adı (SAV-1, SAV-2, HV-1)
+                              // D (3): Yapı Türü (Hidrant, Vantuz)
+                              // E (4): Tipi / Özelliği (Çift Çıkışlı)
+                              // F (5): Çap (DN80)
+                              String hatKodu = _getCellValue(row, 0);
+                              String km = _getCellValue(row, 1);
+                              String yapiAdi = _getCellValue(row, 2);
+                              String yapiTuru =
+                                  row.length > 3 ? _getCellValue(row, 3) : "";
+                              String ozellik =
+                                  row.length > 4 ? _getCellValue(row, 4) : "";
+                              String cap =
+                                  row.length > 5 ? _getCellValue(row, 5) : "";
+
+                              if (hatKodu.isEmpty &&
+                                  yapiAdi.isEmpty &&
+                                  km.isEmpty) {
+                                continue;
+                              }
+
+                              // Başlık Satırını Atla
+                              String hLower = hatKodu.toLowerCase();
+                              if (hLower.contains("hat") &&
+                                  hLower.contains("kod")) {
+                                continue;
+                              }
+
+                              if (hatKodu.isEmpty) {
+                                hatKodu = defaultHatCode;
+                              }
+
+                              String finalTitle = yapiAdi.isNotEmpty
+                                  ? yapiAdi
+                                  : (yapiTuru.isNotEmpty
+                                      ? yapiTuru
+                                      : "Sanat Yapısı");
+
+                              List<String> detailParts = [];
+                              if (yapiTuru.isNotEmpty) {
+                                detailParts.add(yapiTuru);
+                              }
+                              if (ozellik.isNotEmpty) {
+                                detailParts.add(ozellik);
+                              }
+                              if (cap.isNotEmpty) {
+                                detailParts.add(cap);
+                              }
+                              String detailsStr = detailParts.isNotEmpty
+                                  ? detailParts.join(" - ")
+                                  : "Detay Belirtilmedi";
+
+                              currentList.add({
+                                "hatKodu": hatKodu,
+                                "tip": finalTitle,
+                                "km": km.isEmpty ? "0+000" : km,
+                                "beton": detailsStr,
+                                "durum": "Bekliyor",
+                              });
+                              addedCount++;
                             }
                           }
 
@@ -303,7 +368,7 @@ void showAddStructureSheet(BuildContext context,
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
                                   content: Text(
-                                      '🎉 $addedCount adet Sanat Yapısı Excel\'den kütüphaneye yüklendi!'),
+                                      '🎉 $addedCount adet Sanat Yapısı hat klasörlerine bölünerek kütüphaneye eklendi!'),
                                   backgroundColor: Colors.green,
                                 ),
                               );
@@ -353,7 +418,22 @@ void showAddStructureSheet(BuildContext context,
                   ),
                   const SizedBox(height: 12),
 
-                  const Text('Yapı Tipi Seçin:',
+                  buildInputField('Hat Kodu (Örn: S2-1, S2-2)', hatKoduCtrl),
+                  const SizedBox(height: 12),
+
+                  Row(
+                    children: [
+                      Expanded(
+                          child: buildInputField(
+                              'Yapı Adı (Örn: SAV-1, HV-1)', numberCtrl)),
+                      const SizedBox(width: 10),
+                      Expanded(
+                          child: buildInputField('Kilometraj (Km)', kmCtrl)),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+
+                  const Text('Yapı Türü Seçin:',
                       style: TextStyle(color: Colors.grey, fontSize: 12)),
                   const SizedBox(height: 6),
                   Container(
@@ -387,37 +467,53 @@ void showAddStructureSheet(BuildContext context,
                     children: [
                       Expanded(
                           child: buildInputField(
-                              'Yapı No / Tanım (Örn: #5 veya A-Kolu)',
-                              numberCtrl)),
+                              'Özellik (Örn: Çift Çıkışlı)', featureCtrl)),
                       const SizedBox(width: 10),
                       Expanded(
-                          child: buildInputField('Kilometraj (Km)', kmCtrl)),
+                          child:
+                              buildInputField('Çap (Örn: DN80)', diameterCtrl)),
                     ],
                   ),
-                  const SizedBox(height: 12),
-                  buildInputField('Beton Miktarı (m³)', betonCtrl,
-                      isNumber: true),
                   const SizedBox(height: 20),
                   ElevatedButton(
                     onPressed: () {
+                      String userHat = hatKoduCtrl.text.trim();
+                      if (userHat.isEmpty) {
+                        userHat = defaultHatCode;
+                      }
+
                       String finalTitle = numberCtrl.text.trim().isNotEmpty
-                          ? "$selectedType ${numberCtrl.text.trim()}"
+                          ? numberCtrl.text.trim()
                           : selectedType;
+
+                      List<String> dt = [selectedType];
+                      if (featureCtrl.text.trim().isNotEmpty) {
+                        dt.add(featureCtrl.text.trim());
+                      }
+                      if (diameterCtrl.text.trim().isNotEmpty) {
+                        dt.add(diameterCtrl.text.trim());
+                      }
+
                       List<dynamic> currentList =
                           List.from(activeProj["sanatYapitlari"] ?? []);
+
                       currentList.add({
+                        "hatKodu": userHat,
                         "tip": finalTitle,
-                        "km": kmCtrl.text.trim(),
-                        "beton": "${betonCtrl.text.trim()} m³",
+                        "km": kmCtrl.text.trim().isEmpty
+                            ? "0+000"
+                            : kmCtrl.text.trim(),
+                        "beton": dt.join(" - "),
                         "durum": "Bekliyor",
                       });
+
                       activeProj["sanatYapitlari"] = currentList;
                       onSave(activeProj);
                       Navigator.pop(ctx);
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                             content: Text(
-                                '✨ $finalTitle (Km: ${kmCtrl.text}) projeye eklendi!'),
+                                '✨ $finalTitle (Hat: $userHat) projeye eklendi!'),
                             backgroundColor: Colors.green),
                       );
                     },
@@ -441,6 +537,152 @@ void showAddStructureSheet(BuildContext context,
   );
 }
 
+/// 📂 Sanat Yapılarını Hat Kodlarına (S2-1, S2-2 ... S2-31) Göre KLASÖRLÜ Listeleyen Widget
+Widget buildGroupedStructuresList(List<dynamic> sanatList,
+    {Function(int)? onDelete}) {
+  if (sanatList.isEmpty) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E2638).withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: const Text(
+        "Henüz eklenmiş bir sanat yapısı veya branşman yok.\nYukarıdaki + EKLE butonundan Excel veya manuel ekleme yapabilirsiniz.",
+        textAlign: TextAlign.center,
+        style: TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+    );
+  }
+
+  // Hat Koduna göre dinamik gruplama
+  Map<String, List<Map<String, dynamic>>> groupedData = {};
+
+  for (int i = 0; i < sanatList.length; i++) {
+    Map<String, dynamic> mapItem = Map<String, dynamic>.from(sanatList[i]);
+    mapItem["_originalIndex"] = i;
+
+    String hat = mapItem["hatKodu"]?.toString().trim() ?? "";
+    if (hat.isEmpty) {
+      hat = mapItem["hatAd"]?.toString().trim() ?? "S2-1";
+    }
+
+    if (!groupedData.containsKey(hat)) {
+      groupedData[hat] = [];
+    }
+    groupedData[hat]!.add(mapItem);
+  }
+
+  return ListView.builder(
+    shrinkWrap: true,
+    physics: const NeverScrollableScrollPhysics(),
+    itemCount: groupedData.keys.length,
+    itemBuilder: (context, index) {
+      String hatKodu = groupedData.keys.elementAt(index);
+      List<Map<String, dynamic>> items = groupedData[hatKodu]!;
+
+      return Card(
+        color: const Color(0xFF1E2638),
+        margin: const EdgeInsets.only(bottom: 10),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: Colors.white12),
+        ),
+        child: Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            initiallyExpanded: index == 0,
+            leading:
+                const Icon(Icons.folder, color: Color(0xFFFF9F1C), size: 26),
+            title: Text(
+              "📁 Hat Klasörü: $hatKodu",
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
+            ),
+            subtitle: Text(
+              "Toplam ${items.length} Adet Yapı (SAV / HV)",
+              style: const TextStyle(color: Colors.grey, fontSize: 11),
+            ),
+            trailing:
+                const Icon(Icons.keyboard_arrow_down, color: Color(0xFFFF9F1C)),
+            children: items.map((sy) {
+              int origIdx = sy["_originalIndex"] ?? -1;
+
+              return Container(
+                margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF121824),
+                  borderRadius: BorderRadius.circular(10),
+                  border:
+                      Border.all(color: Colors.white.withValues(alpha: 0.05)),
+                ),
+                child: ListTile(
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  leading: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF9F1C).withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(Icons.warning_amber_rounded,
+                        color: Color(0xFFFF9F1C), size: 20),
+                  ),
+                  title: Text(
+                    "${sy["tip"] ?? "Yapı"}",
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: Text(
+                    "Km: ${sy["km"] ?? "0+000"} | ${sy["beton"] ?? ""}",
+                    style: const TextStyle(color: Colors.grey, fontSize: 11),
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFF9F1C).withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          sy["durum"] ?? "Bekliyor",
+                          style: const TextStyle(
+                              color: Color(0xFFFF9F1C),
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      if (onDelete != null && origIdx != -1) ...[
+                        const SizedBox(width: 4),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline,
+                              color: Colors.redAccent, size: 20),
+                          onPressed: () => onDelete(origIdx),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+      );
+    },
+  );
+}
+
+/// 📊 Günlük İlerleme Veri Girişi Penceresi
 void showDataEntrySheet(BuildContext context, Map<String, dynamic> activeProj,
     Function(Map<String, dynamic>) onSave) {
   final kaziCtrl = TextEditingController(
@@ -561,6 +803,7 @@ void showDataEntrySheet(BuildContext context, Map<String, dynamic> activeProj,
   );
 }
 
+/// 📋 DSİ Günlük Saha İlerleme Raporu Dialogu
 void showDsiReportDialog(
     BuildContext context, Map<String, dynamic> activeProj) {
   List<dynamic> sanatList = activeProj["sanatYapitlari"] ?? [];
@@ -580,7 +823,7 @@ void showDsiReportDialog(
   • Dökülen Beton: ${activeProj["betonM3"]} m³
 
 🏗 Sanat Yapıları & Branşmanlar:
-${sanatList.map((y) => "  • ${y["tip"]} (Km: ${y["km"]}): ${y["durum"]} - ${y["beton"]}").join("\n")}""";
+${sanatList.map((y) => "  • ${y["hatKodu"] ?? activeProj["code"] ?? "Hat"} - ${y["tip"]} (Km: ${y["km"]}): ${y["durum"]} - ${y["beton"]}").join("\n")}""";
 
   showDialog(
     context: context,
