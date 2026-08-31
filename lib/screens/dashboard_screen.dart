@@ -1,3 +1,5 @@
+// lib/screens/dashboard_screen.dart
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -260,7 +262,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
               ),
 
-              // 🏗️ SEKME 2: İLERLEME & YAPILAR
+              // 🏗️ SEKME 2: İLERLEME & YAPILAR (HAT KLASÖRLÜ LİSTELEME)
               SingleChildScrollView(
                 padding: const EdgeInsets.all(16.0),
                 child: Column(
@@ -323,30 +325,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ],
                     ),
                     const SizedBox(height: 10),
-                    if (sanatList.isEmpty)
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                            color: const Color(0xFF1E2638),
-                            borderRadius: BorderRadius.circular(10)),
-                        child: const Center(
-                            child: Text(
-                                'Henüz eklenmiş bir sanat yapısı veya branşman yok.',
-                                style: TextStyle(
-                                    color: Colors.grey, fontSize: 13))),
-                      )
-                    else
-                      ...List.generate(sanatList.length, (index) {
-                        var yapi = Map<String, dynamic>.from(sanatList[index]);
-                        return StructureTile(
-                          yapi: yapi,
-                          activeProj: activeProj,
-                          index: index,
-                          onUpdate: (updatedData) =>
-                              syncDataToFirebase(updatedData),
-                        );
-                      }),
+
+                    // 📁 AKILLI KLASÖRLÜ HAT LİSTESİ
+                    buildGroupedStructuresList(
+                      sanatList,
+                      onDelete: (indexToDelete) {
+                        List<dynamic> updatedList = List.from(sanatList);
+                        updatedList.removeAt(indexToDelete);
+                        activeProj["sanatYapitlari"] = updatedList;
+                        syncDataToFirebase(activeProj);
+                      },
+                    ),
                   ],
                 ),
               ),

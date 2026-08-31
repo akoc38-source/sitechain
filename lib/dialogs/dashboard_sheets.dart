@@ -295,13 +295,6 @@ void showAddStructureSheet(BuildContext context,
                                 continue;
                               }
 
-                              // Excel Tablo Sütunları:
-                              // A (0): Hat Kodu (S2-1, S2-2 vb.)
-                              // B (1): Metraj (Km) (0+120.00)
-                              // C (2): Yapı Adı (SAV-1, SAV-2, HV-1)
-                              // D (3): Yapı Türü (Hidrant, Vantuz)
-                              // E (4): Tipi / Özelliği (Çift Çıkışlı)
-                              // F (5): Çap (DN80)
                               String hatKodu = _getCellValue(row, 0);
                               String km = _getCellValue(row, 1);
                               String yapiAdi = _getCellValue(row, 2);
@@ -318,7 +311,6 @@ void showAddStructureSheet(BuildContext context,
                                 continue;
                               }
 
-                              // Başlık Satırını Atla
                               String hLower = hatKodu.toLowerCase();
                               if (hLower.contains("hat") &&
                                   hLower.contains("kod")) {
@@ -557,16 +549,25 @@ Widget buildGroupedStructuresList(List<dynamic> sanatList,
     );
   }
 
-  // Hat Koduna göre dinamik gruplama
+  // Hat Koduna göre esnek dinamik gruplama
   Map<String, List<Map<String, dynamic>>> groupedData = {};
 
   for (int i = 0; i < sanatList.length; i++) {
     Map<String, dynamic> mapItem = Map<String, dynamic>.from(sanatList[i]);
     mapItem["_originalIndex"] = i;
 
-    String hat = mapItem["hatKodu"]?.toString().trim() ?? "";
+    String hat = (mapItem["hatKodu"] ??
+            mapItem["hatAd"] ??
+            mapItem["hat"] ??
+            mapItem["hat_kodu"] ??
+            mapItem["Hat Kodu"] ??
+            mapItem["lineCode"] ??
+            "")
+        .toString()
+        .trim();
+
     if (hat.isEmpty) {
-      hat = mapItem["hatAd"]?.toString().trim() ?? "S2-1";
+      hat = "S2-1";
     }
 
     if (!groupedData.containsKey(hat)) {
@@ -575,12 +576,34 @@ Widget buildGroupedStructuresList(List<dynamic> sanatList,
     groupedData[hat]!.add(mapItem);
   }
 
+  // Hat kodlarını doğal sayısal/alfabetik sıraya koyma
+  List<String> sortedHatKeys = groupedData.keys.toList()
+    ..sort((a, b) {
+      final reg = RegExp(r'(\d+|\D+)');
+      final aMatches = reg.allMatches(a).map((m) => m.group(0)!).toList();
+      final bMatches = reg.allMatches(b).map((m) => m.group(0)!).toList();
+      for (int i = 0; i < aMatches.length && i < bMatches.length; i++) {
+        final aNum = int.tryParse(aMatches[i]);
+        final bNum = int.tryParse(bMatches[i]);
+        if (aNum != null && bNum != null) {
+          if (aNum != bNum) {
+            return aNum.compareTo(bNum);
+          }
+        } else {
+          if (aMatches[i] != bMatches[i]) {
+            return aMatches[i].compareTo(bMatches[i]);
+          }
+        }
+      }
+      return a.length.compareTo(b.length);
+    });
+
   return ListView.builder(
     shrinkWrap: true,
     physics: const NeverScrollableScrollPhysics(),
-    itemCount: groupedData.keys.length,
+    itemCount: sortedHatKeys.length,
     itemBuilder: (context, index) {
-      String hatKodu = groupedData.keys.elementAt(index);
+      String hatKodu = sortedHatKeys[index];
       List<Map<String, dynamic>> items = groupedData[hatKodu]!;
 
       return Card(
@@ -593,11 +616,11 @@ Widget buildGroupedStructuresList(List<dynamic> sanatList,
         child: Theme(
           data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
           child: ExpansionTile(
-            initiallyExpanded: index == 0,
+            initiallyExpanded: false, // 👈 Varsayılan olarak kapalı klasör
             leading:
                 const Icon(Icons.folder, color: Color(0xFFFF9F1C), size: 26),
             title: Text(
-              "📁 Hat Klasörü: $hatKodu",
+              "📁 $hatKodu Hattı Klasörü",
               style: const TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.bold,
@@ -634,7 +657,7 @@ Widget buildGroupedStructuresList(List<dynamic> sanatList,
                         color: Color(0xFFFF9F1C), size: 20),
                   ),
                   title: Text(
-                    "${sy["tip"] ?? "Yapı"}",
+                    "${sy["tip"] ?? sy["name"] ?? "Yapı"}",
                     style: const TextStyle(
                         color: Colors.white,
                         fontSize: 14,
@@ -655,7 +678,7 @@ Widget buildGroupedStructuresList(List<dynamic> sanatList,
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(
-                          sy["durum"] ?? "Bekliyor",
+                          sy["durum"] ?? sy["status"] ?? "Bekliyor",
                           style: const TextStyle(
                               color: Color(0xFFFF9F1C),
                               fontSize: 11,
