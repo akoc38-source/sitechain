@@ -36,6 +36,70 @@ Widget buildInputField(String label, TextEditingController controller,
   );
 }
 
+/// 🛠️ Projede / Excel'de Bulunan Tüm Hat Kodlarını Çeken Yardımcı Fonksiyon
+List<String> getAvailableHatList(Map<String, dynamic> activeProj) {
+  Set<String> hatSet = {};
+
+  // 1. Sanat Yapıları içerisindeki hat kodlarını al
+  List<dynamic> sanatList = activeProj["sanatYapitlari"] ?? [];
+  for (var item in sanatList) {
+    if (item is Map) {
+      String h = (item["hatKodu"] ??
+              item["hatAd"] ??
+              item["hat"] ??
+              item["hat_kodu"] ??
+              item["lineCode"] ??
+              "")
+          .toString()
+          .trim();
+      if (h.isNotEmpty) {
+        hatSet.add(h);
+      }
+    }
+  }
+
+  // 2. Hat İlerleme (hatProgress) haritasındaki hat kodlarını al
+  if (activeProj["hatProgress"] is Map) {
+    Map<String, dynamic> hp =
+        Map<String, dynamic>.from(activeProj["hatProgress"]);
+    hatSet.addAll(hp.keys);
+  }
+
+  // 3. Varsayılan proje kodunu al
+  String mainCode = (activeProj["code"] ?? "S2-1").toString().trim();
+  if (mainCode.isNotEmpty && hatSet.isEmpty) {
+    hatSet.add(mainCode);
+  }
+
+  if (hatSet.isEmpty) {
+    hatSet.add("S2-1");
+  }
+
+  // Doğal sayısal sıralama (S2-1, S2-2, ... S2-31)
+  List<String> sortedList = hatSet.toList();
+  sortedList.sort((a, b) {
+    final reg = RegExp(r'(\d+|\D+)');
+    final aMatches = reg.allMatches(a).map((m) => m.group(0)!).toList();
+    final bMatches = reg.allMatches(b).map((m) => m.group(0)!).toList();
+    for (int i = 0; i < aMatches.length && i < bMatches.length; i++) {
+      final aNum = int.tryParse(aMatches[i]);
+      final bNum = int.tryParse(bMatches[i]);
+      if (aNum != null && bNum != null) {
+        if (aNum != bNum) {
+          return aNum.compareTo(bNum);
+        }
+      } else {
+        if (aMatches[i] != bMatches[i]) {
+          return aMatches[i].compareTo(bMatches[i]);
+        }
+      }
+    }
+    return a.length.compareTo(b.length);
+  });
+
+  return sortedList;
+}
+
 /// 🌟 VIP Promosyon / Davet Kodu Dialogu
 void showVipCodeDialog(
     BuildContext context, bool isProUser, Function(bool) onSuccess) {
@@ -200,7 +264,7 @@ void showProjectSelectorSheet(
   );
 }
 
-/// 📌 Sanat Yapısı / Branşman Ekleme Penceresi (Excel + Manuel + 31 Hat İçin Akıllı Klasörleme)
+/// 📌 Sanat Yapısı / Branşman Ekleme Penceresi (Excel + Manuel + Akıllı Klasörleme)
 void showAddStructureSheet(BuildContext context,
     Map<String, dynamic> activeProj, Function(Map<String, dynamic>) onSave) {
   String defaultHatCode =
@@ -213,9 +277,9 @@ void showAddStructureSheet(BuildContext context,
   final hatKoduCtrl = TextEditingController(text: defaultHatCode);
   final kmCtrl =
       TextEditingController(text: activeProj["montajKm"] ?? "0+120.00");
-  final numberCtrl = TextEditingController(); // Yapı Adı (SAV-1)
-  final featureCtrl = TextEditingController(); // Özellik (Çift Çıkışlı)
-  final diameterCtrl = TextEditingController(); // Çap (DN80)
+  final numberCtrl = TextEditingController();
+  final featureCtrl = TextEditingController();
+  final diameterCtrl = TextEditingController();
 
   List<String> typeOptions = [
     "Hidrant",
@@ -281,6 +345,10 @@ void showAddStructureSheet(BuildContext context,
                           final excel = Excel.decodeBytes(bytes);
                           List<dynamic> currentList =
                               List.from(activeProj["sanatYapitlari"] ?? []);
+                          Map<String, dynamic> hatProgressMap =
+                              Map<String, dynamic>.from(
+                                  activeProj["hatProgress"] ?? {});
+
                           int addedCount = 0;
 
                           for (var table in excel.tables.keys) {
@@ -348,19 +416,35 @@ void showAddStructureSheet(BuildContext context,
                                 "beton": detailsStr,
                                 "durum": "Bekliyor",
                               });
+
+                              // Excel'den gelen hat ismini hatProgress kaydına otomatik ekle
+                              if (!hatProgressMap.containsKey(hatKodu)) {
+                                hatProgressMap[hatKodu] = {
+                                  "hatKodu": hatKodu,
+                                  "kaziKm": km.isEmpty ? "0+000.00" : km,
+                                  "yataklamaKm": km.isEmpty ? "0+000.00" : km,
+                                  "montajKm": km.isEmpty ? "0+000.00" : km,
+                                  "kapamaKm": km.isEmpty ? "0+000.00" : km,
+                                  "cakilSefer": 0,
+                                  "betonM3": 0.0,
+                                };
+                              }
+
                               addedCount++;
                             }
                           }
 
                           if (addedCount > 0) {
                             activeProj["sanatYapitlari"] = currentList;
+                            activeProj["hatProgress"] = hatProgressMap;
                             onSave(activeProj);
+
                             if (ctx.mounted) {
                               Navigator.pop(ctx);
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
                                   content: Text(
-                                      '🎉 $addedCount adet Sanat Yapısı hat klasörlerine bölünerek kütüphaneye eklendi!'),
+                                      '🎉 $addedCount adet Yapı ve Hatlar kütüphaneye eklendi!'),
                                   backgroundColor: Colors.green,
                                 ),
                               );
@@ -529,7 +613,7 @@ void showAddStructureSheet(BuildContext context,
   );
 }
 
-/// 📂 Sanat Yapılarını Hat Kodlarına (S2-1, S2-2 ... S2-31) Göre KLASÖRLÜ Listeleyen Widget
+/// 📂 Sanat Yapılarını Hat Kodlarına Göre KLASÖRLÜ Listeleyen Widget
 Widget buildGroupedStructuresList(List<dynamic> sanatList,
     {Function(int)? onDelete}) {
   if (sanatList.isEmpty) {
@@ -549,7 +633,6 @@ Widget buildGroupedStructuresList(List<dynamic> sanatList,
     );
   }
 
-  // Hat Koduna göre esnek dinamik gruplama
   Map<String, List<Map<String, dynamic>>> groupedData = {};
 
   for (int i = 0; i < sanatList.length; i++) {
@@ -576,7 +659,6 @@ Widget buildGroupedStructuresList(List<dynamic> sanatList,
     groupedData[hat]!.add(mapItem);
   }
 
-  // Hat kodlarını doğal sayısal/alfabetik sıraya koyma
   List<String> sortedHatKeys = groupedData.keys.toList()
     ..sort((a, b) {
       final reg = RegExp(r'(\d+|\D+)');
@@ -616,7 +698,7 @@ Widget buildGroupedStructuresList(List<dynamic> sanatList,
         child: Theme(
           data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
           child: ExpansionTile(
-            initiallyExpanded: false, // 👈 Varsayılan olarak kapalı klasör
+            initiallyExpanded: false,
             leading:
                 const Icon(Icons.folder, color: Color(0xFFFF9F1C), size: 26),
             title: Text(
@@ -705,21 +787,44 @@ Widget buildGroupedStructuresList(List<dynamic> sanatList,
   );
 }
 
-/// 📊 Günlük İlerleme Veri Girişi Penceresi
+/// 📊 Günlük İlerleme Veri Girişi Penceresi (Hat Bazlı Canlı Veri Girişi)
 void showDataEntrySheet(BuildContext context, Map<String, dynamic> activeProj,
     Function(Map<String, dynamic>) onSave) {
+  List<String> availableHats = getAvailableHatList(activeProj);
+
+  String selectedHat = activeProj["lastSelectedHat"]?.toString() ??
+      (availableHats.isNotEmpty ? availableHats.first : "S2-1");
+
+  if (!availableHats.contains(selectedHat) && availableHats.isNotEmpty) {
+    selectedHat = availableHats.first;
+  }
+
+  Map<String, dynamic> hatProgressMap =
+      Map<String, dynamic>.from(activeProj["hatProgress"] ?? {});
+
+  Map<String, dynamic> currentHatData =
+      Map<String, dynamic>.from(hatProgressMap[selectedHat] ?? {});
+
   final kaziCtrl = TextEditingController(
-      text: activeProj["kaziKm"]?.toString() ?? "12+000.00");
+      text: currentHatData["kaziKm"]?.toString() ??
+          activeProj["kaziKm"]?.toString() ??
+          "12+000.00");
   final yataklamaCtrl = TextEditingController(
-      text: activeProj["yataklamaKm"]?.toString() ?? "12+000.00");
+      text: currentHatData["yataklamaKm"]?.toString() ??
+          activeProj["yataklamaKm"]?.toString() ??
+          "12+000.00");
   final montajCtrl = TextEditingController(
-      text: activeProj["montajKm"]?.toString() ?? "12+000.00");
+      text: currentHatData["montajKm"]?.toString() ??
+          activeProj["montajKm"]?.toString() ??
+          "12+000.00");
   final kapamaCtrl = TextEditingController(
-      text: activeProj["kapamaKm"]?.toString() ?? "12+000.00");
-  final cakilCtrl =
-      TextEditingController(text: activeProj["cakilSefer"]?.toString() ?? "0");
+      text: currentHatData["kapamaKm"]?.toString() ??
+          activeProj["kapamaKm"]?.toString() ??
+          "12+000.00");
+  final cakilCtrl = TextEditingController(
+      text: currentHatData["cakilSefer"]?.toString() ?? "0");
   final betonCtrl =
-      TextEditingController(text: activeProj["betonM3"]?.toString() ?? "0");
+      TextEditingController(text: currentHatData["betonM3"]?.toString() ?? "0");
 
   showModalBottomSheet(
     context: context,
@@ -728,99 +833,204 @@ void showDataEntrySheet(BuildContext context, Map<String, dynamic> activeProj,
     shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
     builder: (ctx) {
-      return Padding(
-        padding: EdgeInsets.only(
-            top: 20,
-            left: 16,
-            right: 16,
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                  child: Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                          color: Colors.grey[600],
-                          borderRadius: BorderRadius.circular(2)))),
-              const SizedBox(height: 16),
-              Text(
-                  '${activeProj["code"] ?? "SAHA"} - Günlük İlerleme Girişi (Canlı Yayın)',
-                  style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFFFF9F1C))),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(child: buildInputField('Kazı KM', kaziCtrl)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                      child: buildInputField('Yataklama KM', yataklamaCtrl)),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(child: buildInputField('Montaj KM', montajCtrl)),
-                  const SizedBox(width: 10),
-                  Expanded(child: buildInputField('Kapama KM', kapamaCtrl)),
-                ],
-              ),
-              const SizedBox(height: 16),
-              const Text('Lojistik & Beton',
-                  style: TextStyle(
-                      fontWeight: FontWeight.bold, color: Colors.white)),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                      child: buildInputField('Çakıl Kamyon (Sefer)', cakilCtrl,
-                          isNumber: true)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                      child: buildInputField('Beton (m³)', betonCtrl,
-                          isNumber: true)),
-                ],
-              ),
-              const SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: () {
-                  activeProj["kaziKm"] = kaziCtrl.text;
-                  activeProj["yataklamaKm"] = yataklamaCtrl.text;
-                  activeProj["montajKm"] = montajCtrl.text;
-                  activeProj["kapamaKm"] = kapamaCtrl.text;
-                  activeProj["cakilSefer"] =
-                      int.tryParse(cakilCtrl.text) ?? activeProj["cakilSefer"];
-                  activeProj["betonM3"] =
-                      double.tryParse(betonCtrl.text) ?? activeProj["betonM3"];
+      return StatefulBuilder(
+        builder: (BuildContext context, StateSetter setModalState) {
+          void updateControllersForHat(String newHat) {
+            Map<String, dynamic> hData =
+                Map<String, dynamic>.from(hatProgressMap[newHat] ?? {});
 
-                  onSave(activeProj);
+            kaziCtrl.text = hData["kaziKm"]?.toString() ??
+                activeProj["kaziKm"]?.toString() ??
+                "12+000.00";
+            yataklamaCtrl.text = hData["yataklamaKm"]?.toString() ??
+                activeProj["yataklamaKm"]?.toString() ??
+                "12+000.00";
+            montajCtrl.text = hData["montajKm"]?.toString() ??
+                activeProj["montajKm"]?.toString() ??
+                "12+000.00";
+            kapamaCtrl.text = hData["kapamaKm"]?.toString() ??
+                activeProj["kapamaKm"]?.toString() ??
+                "12+000.00";
+            cakilCtrl.text = hData["cakilSefer"]?.toString() ?? "0";
+            betonCtrl.text = hData["betonM3"]?.toString() ?? "0";
+          }
 
-                  Navigator.pop(ctx);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                        content: Text(
-                            '⚡ Veriler canlı yayınlandı! Tüm ekip arkadaşlarının ekranı güncellendi.'),
-                        backgroundColor: Colors.green),
-                  );
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFFF9F1C),
-                  foregroundColor: Colors.black,
-                  minimumSize: const Size(double.infinity, 48),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10)),
-                ),
-                child: const Text('CANLI YAYINLA VE CANLI SENKRONİZE ET',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
+          return Padding(
+            padding: EdgeInsets.only(
+                top: 20,
+                left: 16,
+                right: 16,
+                bottom: MediaQuery.of(ctx).viewInsets.bottom + 20),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                      child: Container(
+                          width: 40,
+                          height: 4,
+                          decoration: BoxDecoration(
+                              color: Colors.grey[600],
+                              borderRadius: BorderRadius.circular(2)))),
+                  const SizedBox(height: 16),
+                  const Text('Hat Bazlı Günlük İlerleme Girişi (Canlı Yayın)',
+                      style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFFFF9F1C))),
+                  const SizedBox(height: 16),
+
+                  // 🎯 HAT SEÇİMİ AŞAĞI AÇILIR MENÜ
+                  const Text('İlerleme Girilecek Boru Hattını Seçin:',
+                      style: TextStyle(color: Colors.grey, fontSize: 12)),
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(
+                        color: const Color(0xFF121824),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                            color: const Color(0xFFFF9F1C)
+                                .withValues(alpha: 0.5))),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: selectedHat,
+                        isExpanded: true,
+                        dropdownColor: const Color(0xFF121824),
+                        icon: const Icon(Icons.alt_route,
+                            color: Color(0xFFFF9F1C)),
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15),
+                        items: availableHats
+                            .map((String hat) => DropdownMenuItem<String>(
+                                  value: hat,
+                                  child: Row(
+                                    children: [
+                                      const Icon(Icons.folder_open,
+                                          color: Color(0xFFFF9F1C), size: 18),
+                                      const SizedBox(width: 8),
+                                      Text('$hat Hattı',
+                                          style: const TextStyle(
+                                              color: Colors.white)),
+                                    ],
+                                  ),
+                                ))
+                            .toList(),
+                        onChanged: (String? newHat) {
+                          if (newHat != null) {
+                            setModalState(() {
+                              selectedHat = newHat;
+                              updateControllersForHat(newHat);
+                            });
+                          }
+                        },
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  Row(
+                    children: [
+                      Expanded(child: buildInputField('Kazı KM', kaziCtrl)),
+                      const SizedBox(width: 10),
+                      Expanded(
+                          child:
+                              buildInputField('Yataklama KM', yataklamaCtrl)),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(child: buildInputField('Montaj KM', montajCtrl)),
+                      const SizedBox(width: 10),
+                      Expanded(child: buildInputField('Kapama KM', kapamaCtrl)),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Lojistik & Beton',
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold, color: Colors.white)),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                          child: buildInputField(
+                              'Çakıl Kamyon (Sefer)', cakilCtrl,
+                              isNumber: true)),
+                      const SizedBox(width: 10),
+                      Expanded(
+                          child: buildInputField('Beton (m³)', betonCtrl,
+                              isNumber: true)),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  ElevatedButton(
+                    onPressed: () {
+                      int cSefer = int.tryParse(cakilCtrl.text) ?? 0;
+                      double bM3 = double.tryParse(betonCtrl.text) ?? 0.0;
+
+                      // Hat özelinde veriyi güncelle
+                      hatProgressMap[selectedHat] = {
+                        "hatKodu": selectedHat,
+                        "kaziKm": kaziCtrl.text,
+                        "yataklamaKm": yataklamaCtrl.text,
+                        "montajKm": montajCtrl.text,
+                        "kapamaKm": kapamaCtrl.text,
+                        "cakilSefer": cSefer,
+                        "betonM3": bM3,
+                        "updatedAt": DateTime.now().toIso8601String(),
+                      };
+
+                      activeProj["hatProgress"] = hatProgressMap;
+                      activeProj["lastSelectedHat"] = selectedHat;
+
+                      // Ana hat verilerini de son güncellenen hat verilerine eşitle
+                      activeProj["kaziKm"] = kaziCtrl.text;
+                      activeProj["yataklamaKm"] = yataklamaCtrl.text;
+                      activeProj["montajKm"] = montajCtrl.text;
+                      activeProj["kapamaKm"] = kapamaCtrl.text;
+
+                      // Toplam beton ve çakılı hesapla
+                      int totalCakil = 0;
+                      double totalBeton = 0.0;
+                      hatProgressMap.forEach((key, val) {
+                        if (val is Map) {
+                          totalCakil += (val["cakilSefer"] as int? ?? 0);
+                          totalBeton +=
+                              (val["betonM3"] as num? ?? 0).toDouble();
+                        }
+                      });
+                      activeProj["cakilSefer"] = totalCakil;
+                      activeProj["betonM3"] = totalBeton;
+
+                      onSave(activeProj);
+
+                      Navigator.pop(ctx);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                            content: Text(
+                                '⚡ $selectedHat Hattı verileri canlı yayınlandı ve Haritaya işlendi!'),
+                            backgroundColor: Colors.green),
+                      );
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFFF9F1C),
+                      foregroundColor: Colors.black,
+                      minimumSize: const Size(double.infinity, 48),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
+                    ),
+                    child: Text('$selectedHat HATTINI YAYINLA VE HARİTAYA İŞLE',
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ],
               ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       );
     },
   );

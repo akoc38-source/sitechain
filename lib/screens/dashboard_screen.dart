@@ -95,12 +95,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
             "kapamaKm": "12+000.00",
             "cakilSefer": 0,
             "betonM3": 0.0,
-            "sanatYapitlari": []
+            "sanatYapitlari": [],
+            "hatProgress": {}
           };
         }
 
         List<String> activeWarnings = checkCriticalWarnings(activeProj);
         List<dynamic> sanatList = activeProj["sanatYapitlari"] ?? [];
+        String activeHat =
+            activeProj["lastSelectedHat"] ?? activeProj["code"] ?? "S2-1";
 
         return Scaffold(
           backgroundColor: const Color(0xFF121824),
@@ -129,9 +132,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               fontSize: 16,
                               color: Colors.white),
                           overflow: TextOverflow.ellipsis),
-                      Text('Kod: ${activeProj["code"] ?? "AGS"}',
+                      Text('Aktif Hat: $activeHat',
                           style: const TextStyle(
-                              fontSize: 11, color: Colors.grey)),
+                              fontSize: 11, color: Color(0xFFFF9F1C))),
                     ],
                   ),
                 ),
@@ -177,8 +180,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ],
           ),
-
-          // 📱 SADELEŞTİRİLMİŞ SEKME İÇERİKLERİ
           body: IndexedStack(
             index: _currentTab,
             children: [
@@ -262,14 +263,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
               ),
 
-              // 🏗️ SEKME 2: İLERLEME & YAPILAR (HAT KLASÖRLÜ LİSTELEME)
+              // 🏗️ SEKME 2: İLERLEME & YAPILAR (AKILLI HAT KLASÖRLÜ LİSTELEME)
               SingleChildScrollView(
                 padding: const EdgeInsets.all(16.0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                        'Hat İlerleme Durumu (${activeProj["pipeType"] ?? "Boru"})',
+                        'Hat İlerleme Durumu ($activeHat - ${activeProj["pipeType"] ?? "Boru"})',
                         style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
@@ -340,14 +341,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
               ),
 
-              // 🗺️ SEKME 3: CANLI HARİTA
+              // 🗺️ SEKME 3: CANLI HARİTA (Google Maps Canlı İlerleme)
               HaritaSayfasi(
                 activeProjectDocId: widget.activeProjectDocId,
               ),
             ],
           ),
-
-          // ⚓ ALT DOKUNMATİK SEKMELER (BOTTOM NAV BAR)
           bottomNavigationBar: BottomNavigationBar(
             currentIndex: _currentTab,
             backgroundColor: const Color(0xFF1E2638),
