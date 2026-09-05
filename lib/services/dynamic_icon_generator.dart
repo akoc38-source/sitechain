@@ -8,6 +8,11 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 class DynamicIconGenerator {
   static final Map<String, BitmapDescriptor> _iconCache = {};
 
+  /// Önbelleği temizleme metodu
+  static void clearCache() {
+    _iconCache.clear();
+  }
+
   /// Kod ile Tam Otomatik Vektörel Sembol ve Çap Rozeti Çizer (KÜÇÜLTÜLMÜŞ BOYUT)
   static Future<BitmapDescriptor> createAutoIcon({
     required String type,
@@ -102,43 +107,86 @@ class DynamicIconGenerator {
     return descriptor;
   }
 
+  /// Metinlerdeki Türkçe karakter uyumsuzluklarını temizler
+  static String _normalize(String input) {
+    if (input.isEmpty) return "";
+    return input
+        .toLowerCase()
+        .replaceAll('i̇', 'i')
+        .replaceAll('ı', 'i')
+        .replaceAll('ğ', 'g')
+        .replaceAll('ü', 'u')
+        .replaceAll('ş', 's')
+        .replaceAll('ö', 'o')
+        .replaceAll('ç', 'c')
+        .trim();
+  }
+
+  static String _getCombinedSearchText(String type, String feature) {
+    return "${_normalize(type)} ${_normalize(feature)}";
+  }
+
   static Color _getColorForType(String type, String feature, bool isCompleted) {
     if (isCompleted) return Colors.green.shade600;
 
-    String upperType = type.toUpperCase();
-    String upperFeature = feature.toUpperCase();
+    String search = _getCombinedSearchText(type, feature);
 
-    if (upperType.contains('HİDRANT') || upperType.contains('HIDRANT')) {
-      return upperFeature.contains('ÇİFT') || upperFeature.contains('CIFT')
+    if (search.contains('hidrant')) {
+      return (search.contains('cift') ||
+              search.contains('double') ||
+              search.contains('2'))
           ? Colors.blue.shade700
           : Colors.amber.shade700;
-    } else if (upperType.contains('VANTUZ')) {
+    } else if (search.contains('vantuz') || search.contains('hava vanas')) {
       return Colors.deepOrange.shade600;
-    } else if (upperType.contains('TAHLİYE') || upperType.contains('TAHLIYE')) {
-      return upperFeature.contains('POMPAJL')
+    } else if (search.contains('tahliye')) {
+      return search.contains('pompaj')
           ? Colors.purple.shade700
           : Colors.red.shade700;
-    } else if (upperType.contains('AYRIM') || upperType.contains('BRANŞMAN')) {
+    } else if (search.contains('vana') ||
+        search.contains('kapama') ||
+        search.contains('surgulu') ||
+        search.contains('kelebek')) {
+      return Colors.indigo.shade700;
+    } else if (search.contains('ayrim') ||
+        search.contains('bransman') ||
+        search.contains('catallanma')) {
       return Colors.teal.shade700;
+    } else if (search.contains('depo') || search.contains('maslak')) {
+      return Colors.cyan.shade700;
+    } else if (search.contains('pompa') || search.contains('terfi')) {
+      return Colors.deepPurple.shade700;
     }
 
     return Colors.indigo.shade600;
   }
 
   static IconData _getIconDataForType(String type, String feature) {
-    String upperType = type.toUpperCase();
-    String upperFeature = feature.toUpperCase();
+    String search = _getCombinedSearchText(type, feature);
 
-    if (upperType.contains('HİDRANT') || upperType.contains('HIDRANT')) {
-      return upperFeature.contains('ÇİFT') || upperFeature.contains('CIFT')
+    if (search.contains('hidrant')) {
+      return (search.contains('cift') ||
+              search.contains('double') ||
+              search.contains('2'))
           ? Icons.water_drop
           : Icons.water_damage;
-    } else if (upperType.contains('VANTUZ')) {
+    } else if (search.contains('vantuz') || search.contains('hava vanas')) {
       return Icons.air;
-    } else if (upperType.contains('TAHLİYE') || upperType.contains('TAHLIYE')) {
-      return upperFeature.contains('POMPAJL') ? Icons.cyclone : Icons.south;
-    } else if (upperType.contains('AYRIM') || upperType.contains('BRANŞMAN')) {
+    } else if (search.contains('tahliye')) {
+      return search.contains('pompaj') ? Icons.cyclone : Icons.south;
+    } else if (search.contains('vana') ||
+        search.contains('kapama') ||
+        search.contains('surgulu') ||
+        search.contains('kelebek')) {
+      return Icons.radio_button_checked;
+    } else if (search.contains('ayrim') ||
+        search.contains('bransman') ||
+        search.contains('catallanma')) {
       return Icons.alt_route;
+    } else if (search.contains('depo') || search.contains('maslak')) {
+      return Icons.water;
+    } else if (search.contains('pompa') || search.contains('terfi')) {
+      return Icons.speed;
     }
 
     return Icons.location_on;

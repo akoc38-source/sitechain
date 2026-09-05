@@ -1,3 +1,5 @@
+// lib/widgets/dashboard_widgets.dart
+
 import 'package:flutter/material.dart';
 
 class WarningBanner extends StatelessWidget {
@@ -263,41 +265,80 @@ class ProjectHeaderCard extends StatelessWidget {
               color: const Color(0xFFFF9F1C).withValues(alpha: 0.4),
               width: 1.5),
         ),
-        child: Column(
+        child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.green.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(20),
+            // 🌟 PANO LOGO ROZETİ
+            Container(
+              width: 44,
+              height: 44,
+              margin: const EdgeInsets.only(right: 12),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFFFF9F1C).withValues(alpha: 0.3),
+                    blurRadius: 10,
+                    spreadRadius: 1,
                   ),
-                  child: const Text('Şantiye Kodu Değiştir ▾',
-                      style: TextStyle(
-                          color: Colors.greenAccent,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold)),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Image.asset(
+                  'assets/icon/app_icon.png',
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => Image.asset(
+                    'assets/images/logo.png',
+                    fit: BoxFit.contain,
+                    errorBuilder: (context, error, stackTrace) => Container(
+                      color: const Color(0xFF121824),
+                      child: const Icon(Icons.hub, color: Color(0xFFFF9F1C)),
+                    ),
+                  ),
                 ),
-                Text('Kod: ${activeProj["code"] ?? "AGS-S2"}',
-                    style: const TextStyle(color: Colors.grey, fontSize: 12)),
-              ],
+              ),
             ),
-            const SizedBox(height: 8),
-            Text(
-              activeProj["name"] ?? "Ağcaşar S2 Projesi",
-              style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Başlangıç: ${activeProj["startKm"] ?? "12+000.00"} | Toplam Hat: ${activeProj["totalKm"] ?? "20.00"} km',
-              style: const TextStyle(fontSize: 13, color: Colors.grey),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: const Text('Şantiye Kodu Değiştir ▾',
+                            style: TextStyle(
+                                color: Colors.greenAccent,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold)),
+                      ),
+                      Text('Kod: ${activeProj["code"] ?? "AGS-S2"}',
+                          style: const TextStyle(
+                              color: Colors.grey, fontSize: 11)),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    activeProj["name"] ?? "Ağcaşar S2 Projesi",
+                    style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Başlangıç: ${activeProj["startKm"] ?? "12+000.00"} | Toplam Hat: ${activeProj["totalKm"] ?? "20.00"} km',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ],
+              ),
             ),
           ],
         ),

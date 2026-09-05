@@ -112,14 +112,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
             elevation: 0,
             title: Row(
               children: [
+                // 🌟 APPBAR SITECHAIN UYGULAMA İKONU
                 Container(
-                  padding: const EdgeInsets.all(6),
+                  width: 32,
+                  height: 32,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFF9F1C).withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(8),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFFFF9F1C).withValues(alpha: 0.25),
+                        blurRadius: 8,
+                        spreadRadius: 1,
+                      ),
+                    ],
                   ),
-                  child:
-                      const Icon(Icons.hub, color: Color(0xFFFF9F1C), size: 20),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.asset(
+                      'assets/icon/app_icon.png',
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) => Image.asset(
+                        'assets/images/logo.png',
+                        fit: BoxFit.contain,
+                        errorBuilder: (context, error, stackTrace) => Container(
+                          color: const Color(0xFF121824),
+                          child: const Icon(
+                            Icons.hub,
+                            color: Color(0xFFFF9F1C),
+                            size: 20,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -269,12 +294,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                        'Hat İlerleme Durumu ($activeHat - ${activeProj["pipeType"] ?? "Boru"})',
-                        style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white)),
+                    Row(
+                      children: [
+                        // 🌟 İLERLEME SEKMESİ LOGO SİMGESİ
+                        Container(
+                          width: 26,
+                          height: 26,
+                          margin: const EdgeInsets.only(right: 8),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(6),
+                            child: Image.asset(
+                              'assets/icon/app_icon.png',
+                              fit: BoxFit.cover,
+                              errorBuilder: (ctx, err, stack) => Image.asset(
+                                'assets/images/logo.png',
+                                errorBuilder: (ctx, err, stack) => const Icon(
+                                    Icons.hub,
+                                    color: Color(0xFFFF9F1C),
+                                    size: 20),
+                              ),
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: Text(
+                              'Hat İlerleme Durumu ($activeHat - ${activeProj["pipeType"] ?? "Boru"})',
+                              style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white)),
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 12),
                     ProgressCard(
                         title: '1. Kazı Aşaması',

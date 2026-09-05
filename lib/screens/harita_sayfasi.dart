@@ -135,6 +135,10 @@ class _HaritaSayfasiState extends State<HaritaSayfasi> {
   StreamSubscription<QuerySnapshot>? _linesSubscription;
   StreamSubscription<DocumentSnapshot>? _mainProjectSubscription;
   StreamSubscription<Position>? _positionStreamSubscription;
+
+  Map<String, dynamic>? _mainProjectData;
+  List<QueryDocumentSnapshot> _linesDocs = [];
+
   bool _ilkKonumKilitlendi = false;
   bool _haritaOdaklandi = false;
 
@@ -457,24 +461,46 @@ class _HaritaSayfasiState extends State<HaritaSayfasi> {
     }
   }
 
+  /// 🔄 BİRLEŞİK CANLI DİNLEYİCİ (ANA PROJE + LINES ALT KOLEKSİYONU)
   void _startCanliProjeDinleyicisi() {
     _linesSubscription?.cancel();
+    _mainProjectSubscription?.cancel();
 
+    // 1. Ana Proje Dokümanı Canlı Dinle (Pano'dan güncellenen hatProgress verileri için)
+    _mainProjectSubscription = FirebaseFirestore.instance
+        .collection('projects')
+        .doc(widget.activeProjectDocId)
+        .snapshots()
+        .listen((snapshot) {
+      if (snapshot.exists && snapshot.data() != null) {
+        _mainProjectData = snapshot.data() as Map<String, dynamic>;
+        _rebuildMapElements();
+      }
+    });
+
+    // 2. Lines Alt Koleksiyonu Canlı Dinle (Excel ve KML ile oluşturulan çizgi ve yapılar için)
     _linesSubscription = FirebaseFirestore.instance
         .collection('projects')
         .doc(widget.activeProjectDocId)
         .collection('lines')
         .snapshots()
         .listen((querySnap) {
-      if (querySnap.docs.isNotEmpty) {
-        _processLinesSnapshot(querySnap.docs);
-      } else {
-        _startMainProjectFallbackListener();
-      }
+      _linesDocs = querySnap.docs;
+      _rebuildMapElements();
     });
   }
 
-  Future<void> _processLinesSnapshot(List<QueryDocumentSnapshot> docs) async {
+  /// 🎨 CANLI HARİTA ELEMANLARINI BİRLEŞTİREREK RENKLENDİREN MERKEZİ MOTOR
+  Future<void> _rebuildMapElements() async {
+    if (!mounted) {
+      return;
+    }
+
+    Map<String, dynamic> mainData = _mainProjectData ?? {};
+    Map<String, dynamic> hatProgressMap =
+        Map<String, dynamic>.from(mainData["hatProgress"] ?? {});
+    List<dynamic> mainSanatList = mainData["sanatYapitlari"] ?? [];
+
     Set<Polyline> newPolylines = {};
     Set<Marker> newMarkers = {};
     List<String> codes = [];
@@ -482,180 +508,485 @@ class _HaritaSayfasiState extends State<HaritaSayfasi> {
     double? minLat, maxLat, minLon, maxLon;
     int totalPts = 0;
 
-    for (var doc in docs) {
-      var data = doc.data() as Map<String, dynamic>;
-      String lineCode = data["code"] ?? doc.id;
-      codes.add(lineCode);
+    // Eğer lines alt koleksiyonunda veri varsa oradan işle
+    if (_linesDocs.isNotEmpty) {
+      for (var doc in _linesDocs) {
+        var data = doc.data() as Map<String, dynamic>;
+        String lineCode = data["code"] ?? doc.id;
+        codes.add(lineCode);
 
-      if (_selectedLineCode != null && _selectedLineCode != lineCode) {
-        continue;
-      }
+        if (_selectedLineCode != null && _selectedLineCode != lineCode) {
+          continue;
+        }
 
-      List<LatLng> basePoints = [];
-      if (data['coordinates'] != null &&
-          (data['coordinates'] as List).isNotEmpty) {
-        for (var c in (data['coordinates'] as List)) {
-          if (c is Map && c.containsKey('lat') && c.containsKey('lng')) {
-            double? lat = double.tryParse(c['lat'].toString());
-            double? lng = double.tryParse(c['lng'].toString());
-            if (lat != null && lng != null) {
-              LatLng p = LatLng(lat, lng);
-              basePoints.add(p);
-              totalPts++;
+        List<LatLng> basePoints = [];
+        if (data['coordinates'] != null &&
+            (data['coordinates'] as List).isNotEmpty) {
+          for (var c in (data['coordinates'] as List)) {
+            if (c is Map && c.containsKey('lat') && c.containsKey('lng')) {
+              double? lat = double.tryParse(c['lat'].toString());
+              double? lng = double.tryParse(c['lng'].toString());
+              if (lat != null && lng != null) {
+                LatLng p = LatLng(lat, lng);
+                basePoints.add(p);
+                totalPts++;
 
-              if (minLat == null || lat < minLat) {
-                minLat = lat;
-              }
-              if (maxLat == null || lat > maxLat) {
-                maxLat = lat;
-              }
-              if (minLon == null || lng < minLon) {
-                minLon = lng;
-              }
-              if (maxLon == null || lng > maxLon) {
-                maxLon = lng;
+                if (minLat == null || lat < minLat) {
+                  minLat = lat;
+                }
+                if (maxLat == null || lat > maxLat) {
+                  maxLat = lat;
+                }
+                if (minLon == null || lng < minLon) {
+                  minLon = lng;
+                }
+                if (maxLon == null || lng > maxLon) {
+                  maxLon = lng;
+                }
               }
             }
           }
+        } else if (_rawLineGeometries.containsKey(lineCode)) {
+          basePoints = _rawLineGeometries[lineCode]!;
+          totalPts += basePoints.length;
         }
-      } else if (_rawLineGeometries.containsKey(lineCode)) {
-        basePoints = _rawLineGeometries[lineCode]!;
+
+        if (basePoints.isEmpty) {
+          continue;
+        }
+
+        // 🟡 Base Polyline (Sarı/Turuncu Zemin - Genişlik 12 - zIndex: 0)
+        newPolylines.add(Polyline(
+          polylineId: PolylineId('${lineCode}_base'),
+          points: basePoints,
+          color: const Color(0x66FF9F1C),
+          width: 12,
+          zIndex: 0,
+        ));
+
+        // Metraj verilerini önce Pano'daki hatProgress'ten, yoksa alt koleksiyon çizgisinden al
+        Map<String, dynamic> hData =
+            Map<String, dynamic>.from(hatProgressMap[lineCode] ?? {});
+
+        double startM = LineCalculator.parseKmToMeters(
+            hData["startKm"] ?? data["startKm"]?.toString() ?? "0+000");
+
+        dynamic kaziVal = hData["kaziKm"] ?? data["kaziKm"];
+        dynamic yataklamaVal = hData["yataklamaKm"] ?? data["yataklamaKm"];
+        dynamic montajVal = hData["montajKm"] ?? data["montajKm"];
+        dynamic kapamaVal = hData["kapamaKm"] ?? data["kapamaKm"];
+
+        // 🔴 KAZI (Kırmızı - Dış Katman - Genişlik 10 - %75 Opaklık - zIndex: 1)
+        double relKazi = _parseRelMeters(kaziVal, startM);
+        if (relKazi > 0) {
+          List<LatLng> kaziPts =
+              LineCalculator.getSubPolyline(basePoints, 0.0, relKazi);
+          if (kaziPts.isNotEmpty) {
+            newPolylines.add(Polyline(
+              polylineId: PolylineId('${lineCode}_kazi'),
+              points: kaziPts,
+              color: const Color(0xCCE71D36),
+              width: 10,
+              zIndex: 1,
+            ));
+          }
+        }
+
+        // 🟡 YATAKLAMA (Turuncu - İç Katman - Genişlik 8 - %80 Opaklık - zIndex: 2)
+        double relYataklama = _parseRelMeters(yataklamaVal, startM);
+        if (relYataklama > 0) {
+          List<LatLng> yataklamaPts =
+              LineCalculator.getSubPolyline(basePoints, 0.0, relYataklama);
+          if (yataklamaPts.isNotEmpty) {
+            newPolylines.add(Polyline(
+              polylineId: PolylineId('${lineCode}_yataklama'),
+              points: yataklamaPts,
+              color: const Color(0xCCFF9F1C),
+              width: 8,
+              zIndex: 2,
+            ));
+          }
+        }
+
+        // 🟢 MONTAJ (Turkuaz - İç Katman - Genişlik 6 - %85 Opaklık - zIndex: 3)
+        double relMontaj = _parseRelMeters(montajVal, startM);
+        if (relMontaj > 0) {
+          List<LatLng> montajPts =
+              LineCalculator.getSubPolyline(basePoints, 0.0, relMontaj);
+          if (montajPts.isNotEmpty) {
+            newPolylines.add(Polyline(
+              polylineId: PolylineId('${lineCode}_montaj'),
+              points: montajPts,
+              color: const Color(0xCC2EC4B6),
+              width: 6,
+              zIndex: 3,
+            ));
+          }
+        }
+
+        // 🔵 KAPAMA (Mavi - Merkez Katman - Genişlik 4 - %90 Opaklık - zIndex: 4)
+        double relKapama = _parseRelMeters(kapamaVal, startM);
+        if (relKapama > 0) {
+          List<LatLng> kapamaPts =
+              LineCalculator.getSubPolyline(basePoints, 0.0, relKapama);
+          if (kapamaPts.isNotEmpty) {
+            newPolylines.add(Polyline(
+              polylineId: PolylineId('${lineCode}_kapama'),
+              points: kapamaPts,
+              color: const Color(0xCC20A4F3),
+              width: 4,
+              zIndex: 4,
+            ));
+          }
+        }
+
+        // 📍 SANAT YAPILARI (Hidrant, Vantuz, Tahliye Vanası vb. Özel İkonlar)
+        List<dynamic> sanatYapitlari = List.from(data["sanatYapitlari"] ?? []);
+
+        // Pano/Ana Projedeki bu hatta ait sanat yapılarını da ekle
+        for (var sy in mainSanatList) {
+          if (sy is Map) {
+            String h = (sy["hatKodu"] ?? sy["hatAd"] ?? sy["hat"] ?? "")
+                .toString()
+                .trim();
+            if (h == lineCode && !sanatYapitlari.contains(sy)) {
+              sanatYapitlari.add(sy);
+            }
+          }
+        }
+
+        for (int i = 0; i < sanatYapitlari.length; i++) {
+          var yapi = sanatYapitlari[i];
+          if (yapi is! Map) {
+            continue;
+          }
+
+          double? lat = double.tryParse(
+              yapi["lat"]?.toString() ?? yapi["latitude"]?.toString() ?? '');
+          double? lng = double.tryParse(
+              yapi["lng"]?.toString() ?? yapi["longitude"]?.toString() ?? '');
+          LatLng? point;
+
+          if (lat != null && lng != null) {
+            point = LatLng(lat, lng);
+          } else {
+            double relYapiM =
+                _parseRelMeters(yapi["km"] ?? yapi["Km"] ?? yapi["KM"], startM);
+            point = LineCalculator.getPointAtDistance(basePoints, relYapiM);
+          }
+
+          if (point != null) {
+            bool isCompleted = yapi["status"] == "Tamamlandı" ||
+                yapi["durum"] == "Tamamlandı" ||
+                yapi["completed"] == true ||
+                yapi["isCompleted"] == true;
+
+            String type = (yapi["type"] ??
+                    yapi["tip"] ??
+                    yapi["name"] ??
+                    yapi["ad"] ??
+                    yapi["tur"] ??
+                    yapi["yapiTipi"] ??
+                    "Yapı")
+                .toString();
+            String feature = (yapi["feature"] ??
+                    yapi["ozellik"] ??
+                    yapi["özelik"] ??
+                    yapi["subType"] ??
+                    yapi["detay"] ??
+                    "")
+                .toString();
+            String diameter = (yapi["diameter"] ??
+                    yapi["cap"] ??
+                    yapi["çap"] ??
+                    yapi["Cap"] ??
+                    "")
+                .toString();
+
+            // Beton veya Açıklama metninden tür, özellik ve çap ayrıştırması yap
+            String betonStr = (yapi["beton"] ??
+                    yapi["aciklama"] ??
+                    yapi["açıklama"] ??
+                    yapi["details"] ??
+                    "")
+                .toString();
+            if (betonStr.isNotEmpty) {
+              List<String> parts =
+                  betonStr.split("-").map((e) => e.trim()).toList();
+              if (parts.isNotEmpty && (type == "Yapı" || type.isEmpty)) {
+                type = parts[0];
+              }
+              if (parts.length > 1 && feature.isEmpty) {
+                feature = parts[1];
+              }
+              if (parts.length > 2 && diameter.isEmpty) {
+                diameter = parts[2];
+              }
+            }
+
+            double rotation = double.tryParse(yapi["rotation"]?.toString() ??
+                    yapi["aci"]?.toString() ??
+                    '0') ??
+                0.0;
+
+            BitmapDescriptor autoIcon =
+                await DynamicIconGenerator.createAutoIcon(
+              type: type,
+              feature: feature,
+              diameter: diameter,
+              isCompleted: isCompleted,
+            );
+
+            String subtitleDetails = [
+              if (feature.isNotEmpty) feature,
+              if (diameter.isNotEmpty) diameter,
+            ].join(' - ');
+
+            newMarkers.add(Marker(
+              markerId: MarkerId(
+                  '${lineCode}_sanat_${i}_${yapi["id"] ?? yapi["name"] ?? i}'),
+              position: point,
+              rotation: rotation,
+              icon: autoIcon,
+              infoWindow: InfoWindow(
+                title:
+                    "${yapi["name"] ?? yapi["ad"] ?? yapi["tip"] ?? type} ($lineCode)",
+                snippet:
+                    "Km: ${yapi["km"] ?? yapi["Km"] ?? "0+000"} | $type ${subtitleDetails.isNotEmpty ? '($subtitleDetails)' : ''} | Durum: ${isCompleted ? 'Tamamlandı' : 'Bekliyor'}",
+              ),
+            ));
+          }
+        }
+      }
+    } else {
+      // Lines alt koleksiyonu henüz yoksa, Ana Proje ve KML Ham Geometrileri üzerinden çiz
+      Set<String> allDetectedHats = {};
+      for (var item in mainSanatList) {
+        if (item is Map) {
+          String h = (item["hatKodu"] ?? item["hatAd"] ?? item["hat"] ?? "")
+              .toString()
+              .trim();
+          if (h.isNotEmpty) {
+            allDetectedHats.add(h);
+          }
+        }
+      }
+      allDetectedHats.addAll(hatProgressMap.keys);
+      allDetectedHats.addAll(_rawLineGeometries.keys);
+      if (allDetectedHats.isEmpty) {
+        allDetectedHats.add(mainData["code"] ?? "S2-1");
+      }
+
+      codes = allDetectedHats.toList();
+
+      List<String> hatsToRender =
+          (_selectedLineCode != null && _selectedLineCode!.isNotEmpty)
+              ? [_selectedLineCode!]
+              : codes;
+
+      for (String lineCode in hatsToRender) {
+        Map<String, dynamic> hData =
+            Map<String, dynamic>.from(hatProgressMap[lineCode] ?? {});
+
+        List<LatLng> basePoints = _rawLineGeometries[lineCode] ?? [];
+
+        if (basePoints.isEmpty) {
+          if (_rawLineGeometries.isNotEmpty) {
+            basePoints = _rawLineGeometries.values.first;
+          } else {
+            basePoints = [
+              const LatLng(38.35, 35.35),
+              const LatLng(38.36, 35.36),
+            ];
+          }
+        }
+
         totalPts += basePoints.length;
-      }
 
-      if (basePoints.isEmpty) {
-        continue;
-      }
+        newPolylines.add(Polyline(
+          polylineId: PolylineId('${lineCode}_base'),
+          points: basePoints,
+          color: const Color(0x66FF9F1C),
+          width: 12,
+          zIndex: 0,
+        ));
 
-      newPolylines.add(Polyline(
-        polylineId: PolylineId('${lineCode}_base'),
-        points: basePoints,
-        color: const Color(0xFFFF9F1C),
-        width: 5,
-      ));
+        double startM = LineCalculator.parseKmToMeters(
+            hData["startKm"] ?? mainData["startKm"] ?? "0+000");
 
-      double startM = LineCalculator.parseKmToMeters(
-          data["startKm"]?.toString() ?? "0+000");
-
-      // 🔴 KAZI
-      double relKazi = _parseRelMeters(data["kaziKm"], startM);
-      if (relKazi > 0) {
-        List<LatLng> kaziPts =
-            LineCalculator.getSubPolyline(basePoints, 0.0, relKazi);
-        if (kaziPts.isNotEmpty) {
-          newPolylines.add(Polyline(
-            polylineId: PolylineId('${lineCode}_kazi'),
-            points: kaziPts,
-            color: const Color(0xFFE71D36),
-            width: 8,
-          ));
-        }
-      }
-
-      // 🟡 YATAKLAMA
-      double relYataklama = _parseRelMeters(data["yataklamaKm"], startM);
-      if (relYataklama > 0) {
-        List<LatLng> yataklamaPts =
-            LineCalculator.getSubPolyline(basePoints, 0.0, relYataklama);
-        if (yataklamaPts.isNotEmpty) {
-          newPolylines.add(Polyline(
-            polylineId: PolylineId('${lineCode}_yataklama'),
-            points: yataklamaPts,
-            color: const Color(0xFFFF9F1C),
-            width: 7,
-          ));
-        }
-      }
-
-      // 🟢 MONTAJ
-      double relMontaj = _parseRelMeters(data["montajKm"], startM);
-      if (relMontaj > 0) {
-        List<LatLng> montajPts =
-            LineCalculator.getSubPolyline(basePoints, 0.0, relMontaj);
-        if (montajPts.isNotEmpty) {
-          newPolylines.add(Polyline(
-            polylineId: PolylineId('${lineCode}_montaj'),
-            points: montajPts,
-            color: const Color(0xFF2EC4B6),
-            width: 6,
-          ));
-        }
-      }
-
-      // 🔵 KAPAMA
-      double relKapama = _parseRelMeters(data["kapamaKm"], startM);
-      if (relKapama > 0) {
-        List<LatLng> kapamaPts =
-            LineCalculator.getSubPolyline(basePoints, 0.0, relKapama);
-        if (kapamaPts.isNotEmpty) {
-          newPolylines.add(Polyline(
-            polylineId: PolylineId('${lineCode}_kapama'),
-            points: kapamaPts,
-            color: const Color(0xFF20A4F3),
-            width: 5,
-          ));
-        }
-      }
-
-      List<dynamic> sanatYapitlari = data["sanatYapitlari"] ?? [];
-      for (int i = 0; i < sanatYapitlari.length; i++) {
-        var yapi = sanatYapitlari[i];
-
-        double? lat = double.tryParse(yapi["lat"]?.toString() ?? '');
-        double? lng = double.tryParse(yapi["lng"]?.toString() ?? '');
-        LatLng? point;
-
-        if (lat != null && lng != null) {
-          point = LatLng(lat, lng);
-        } else {
-          double relYapiM = _parseRelMeters(yapi["km"], startM);
-          point = LineCalculator.getPointAtDistance(basePoints, relYapiM);
+        double relKazi =
+            _parseRelMeters(hData["kaziKm"] ?? mainData["kaziKm"], startM);
+        if (relKazi > 0) {
+          List<LatLng> kaziPts =
+              LineCalculator.getSubPolyline(basePoints, 0.0, relKazi);
+          if (kaziPts.isNotEmpty) {
+            newPolylines.add(Polyline(
+              polylineId: PolylineId('${lineCode}_kazi'),
+              points: kaziPts,
+              color: const Color(0xCCE71D36),
+              width: 10,
+              zIndex: 1,
+            ));
+          }
         }
 
-        if (point != null) {
-          bool isCompleted =
-              yapi["status"] == "Tamamlandı" || yapi["durum"] == "Tamamlandı";
-          String type = yapi["type"] ?? yapi["tip"] ?? "Yapı";
-          String feature = yapi["feature"] ?? "";
-          String diameter = yapi["diameter"] ?? "";
-          double rotation =
-              double.tryParse(yapi["rotation"]?.toString() ?? '0') ?? 0.0;
+        double relYataklama = _parseRelMeters(
+            hData["yataklamaKm"] ?? mainData["yataklamaKm"], startM);
+        if (relYataklama > 0) {
+          List<LatLng> yataklamaPts =
+              LineCalculator.getSubPolyline(basePoints, 0.0, relYataklama);
+          if (yataklamaPts.isNotEmpty) {
+            newPolylines.add(Polyline(
+              polylineId: PolylineId('${lineCode}_yataklama'),
+              points: yataklamaPts,
+              color: const Color(0xCCFF9F1C),
+              width: 8,
+              zIndex: 2,
+            ));
+          }
+        }
 
-          BitmapDescriptor autoIcon = await DynamicIconGenerator.createAutoIcon(
-            type: type,
-            feature: feature,
-            diameter: diameter,
-            isCompleted: isCompleted,
-          );
+        double relMontaj =
+            _parseRelMeters(hData["montajKm"] ?? mainData["montajKm"], startM);
+        if (relMontaj > 0) {
+          List<LatLng> montajPts =
+              LineCalculator.getSubPolyline(basePoints, 0.0, relMontaj);
+          if (montajPts.isNotEmpty) {
+            newPolylines.add(Polyline(
+              polylineId: PolylineId('${lineCode}_montaj'),
+              points: montajPts,
+              color: const Color(0xCC2EC4B6),
+              width: 6,
+              zIndex: 3,
+            ));
+          }
+        }
 
-          String subtitleDetails = [
-            if (feature.isNotEmpty) feature,
-            if (diameter.isNotEmpty) diameter,
-          ].join(' - ');
+        double relKapama =
+            _parseRelMeters(hData["kapamaKm"] ?? mainData["kapamaKm"], startM);
+        if (relKapama > 0) {
+          List<LatLng> kapamaPts =
+              LineCalculator.getSubPolyline(basePoints, 0.0, relKapama);
+          if (kapamaPts.isNotEmpty) {
+            newPolylines.add(Polyline(
+              polylineId: PolylineId('${lineCode}_kapama'),
+              points: kapamaPts,
+              color: const Color(0xCC20A4F3),
+              width: 4,
+              zIndex: 4,
+            ));
+          }
+        }
 
-          newMarkers.add(Marker(
-            markerId: MarkerId('${lineCode}_sanat_$i'),
-            position: point,
-            rotation: rotation,
-            icon: autoIcon,
-            infoWindow: InfoWindow(
-              title: "${yapi["name"] ?? type} ($lineCode)",
-              snippet:
-                  "Km: ${yapi["km"] ?? "0+000"} | $type ${subtitleDetails.isNotEmpty ? '($subtitleDetails)' : ''}",
-            ),
-          ));
+        List<dynamic> lineSanatList = mainSanatList.where((sy) {
+          String h = (sy["hatKodu"] ?? sy["hatAd"] ?? sy["hat"] ?? "")
+              .toString()
+              .trim();
+          return h.isEmpty || h == lineCode;
+        }).toList();
+
+        for (int i = 0; i < lineSanatList.length; i++) {
+          var yapi = lineSanatList[i];
+          if (yapi is! Map) {
+            continue;
+          }
+
+          double? lat = double.tryParse(
+              yapi["lat"]?.toString() ?? yapi["latitude"]?.toString() ?? '');
+          double? lng = double.tryParse(
+              yapi["lng"]?.toString() ?? yapi["longitude"]?.toString() ?? '');
+          LatLng? point;
+
+          if (lat != null && lng != null) {
+            point = LatLng(lat, lng);
+          } else {
+            double relYapiM =
+                _parseRelMeters(yapi["km"] ?? yapi["Km"] ?? yapi["KM"], startM);
+            point = LineCalculator.getPointAtDistance(basePoints, relYapiM);
+          }
+
+          if (point != null) {
+            bool isCompleted = yapi["status"] == "Tamamlandı" ||
+                yapi["durum"] == "Tamamlandı" ||
+                yapi["completed"] == true ||
+                yapi["isCompleted"] == true;
+
+            String type = (yapi["type"] ??
+                    yapi["tip"] ??
+                    yapi["name"] ??
+                    yapi["ad"] ??
+                    yapi["tur"] ??
+                    yapi["yapiTipi"] ??
+                    "Yapı")
+                .toString();
+            String feature = (yapi["feature"] ??
+                    yapi["ozellik"] ??
+                    yapi["özelik"] ??
+                    yapi["subType"] ??
+                    yapi["detay"] ??
+                    "")
+                .toString();
+            String diameter = (yapi["diameter"] ??
+                    yapi["cap"] ??
+                    yapi["çap"] ??
+                    yapi["Cap"] ??
+                    "")
+                .toString();
+
+            BitmapDescriptor autoIcon =
+                await DynamicIconGenerator.createAutoIcon(
+              type: type,
+              feature: feature,
+              diameter: diameter,
+              isCompleted: isCompleted,
+            );
+
+            newMarkers.add(Marker(
+              markerId: MarkerId(
+                  '${lineCode}_sanat_${i}_${yapi["id"] ?? yapi["name"] ?? i}'),
+              position: point,
+              icon: autoIcon,
+              infoWindow: InfoWindow(
+                title:
+                    "${yapi["name"] ?? yapi["ad"] ?? yapi["tip"] ?? type} ($lineCode)",
+                snippet:
+                    "Km: ${yapi["km"] ?? yapi["Km"] ?? "0+000"} | Durum: ${isCompleted ? 'Tamamlandı' : 'Bekliyor'}",
+              ),
+            ));
+          }
         }
       }
     }
 
     if (mounted) {
+      List<String> sortedLineCodes = codes.toSet().toList()
+        ..sort((a, b) {
+          final reg = RegExp(r'(\d+|\D+)');
+          final aMatches = reg.allMatches(a).map((m) => m.group(0)!).toList();
+          final bMatches = reg.allMatches(b).map((m) => m.group(0)!).toList();
+          for (int i = 0; i < aMatches.length && i < bMatches.length; i++) {
+            final aNum = int.tryParse(aMatches[i]);
+            final bNum = int.tryParse(bMatches[i]);
+            if (aNum != null && bNum != null) {
+              if (aNum != bNum) {
+                return aNum.compareTo(bNum);
+              }
+            } else {
+              if (aMatches[i] != bMatches[i]) {
+                return aMatches[i].compareTo(bMatches[i]);
+              }
+            }
+          }
+          return a.length.compareTo(b.length);
+        });
+
       setState(() {
-        _loadedLineCount = docs.length;
+        _loadedLineCount = sortedLineCodes.length;
         _totalCoordinateCount = totalPts;
+        _availableLineCodes.clear();
+        _availableLineCodes.addAll(sortedLineCodes);
         _statusMessage =
             "✅ $_loadedLineCount Hat • ${newMarkers.length} Yapı Çizildi";
-        _availableLineCodes.clear();
-        _availableLineCodes.addAll(codes.toSet().toList()..sort());
         _dinamikPolylineHatlari.clear();
         _dinamikPolylineHatlari.addAll(newPolylines);
         _sahaElemaniMarkers.clear();
@@ -678,233 +1009,6 @@ class _HaritaSayfasiState extends State<HaritaSayfasi> {
         );
       }
     }
-  }
-
-  /// 🔄 HAT BAZLI CANLI İLERLEME (hatProgress) ve ANA PROJE DİNLEYİCİSİ
-  void _startMainProjectFallbackListener() {
-    _mainProjectSubscription?.cancel();
-    _mainProjectSubscription = FirebaseFirestore.instance
-        .collection('projects')
-        .doc(widget.activeProjectDocId)
-        .snapshots()
-        .listen((snapshot) async {
-      if (!snapshot.exists || snapshot.data() == null) {
-        return;
-      }
-      var data = snapshot.data() as Map<String, dynamic>;
-
-      Map<String, dynamic> hatProgressMap =
-          Map<String, dynamic>.from(data["hatProgress"] ?? {});
-
-      List<dynamic> sanatList = data["sanatYapitlari"] ?? [];
-
-      Set<String> allDetectedHats = {};
-
-      for (var item in sanatList) {
-        if (item is Map) {
-          String h = (item["hatKodu"] ?? item["hatAd"] ?? item["hat"] ?? "")
-              .toString()
-              .trim();
-          if (h.isNotEmpty) {
-            allDetectedHats.add(h);
-          }
-        }
-      }
-      allDetectedHats.addAll(hatProgressMap.keys);
-      allDetectedHats.addAll(_rawLineGeometries.keys);
-
-      if (allDetectedHats.isEmpty) {
-        allDetectedHats.add(data["code"] ?? "S2-1");
-      }
-
-      List<String> sortedHats = allDetectedHats.toList()
-        ..sort((a, b) {
-          final reg = RegExp(r'(\d+|\D+)');
-          final aMatches = reg.allMatches(a).map((m) => m.group(0)!).toList();
-          final bMatches = reg.allMatches(b).map((m) => m.group(0)!).toList();
-          for (int i = 0; i < aMatches.length && i < bMatches.length; i++) {
-            final aNum = int.tryParse(aMatches[i]);
-            final bNum = int.tryParse(bMatches[i]);
-            if (aNum != null && bNum != null) {
-              if (aNum != bNum) {
-                return aNum.compareTo(bNum);
-              }
-            } else {
-              if (aMatches[i] != bMatches[i]) {
-                return aMatches[i].compareTo(bMatches[i]);
-              }
-            }
-          }
-          return a.length.compareTo(b.length);
-        });
-
-      Set<Polyline> newPolylines = {};
-      Set<Marker> newMarkers = {};
-      int totalPts = 0;
-
-      List<String> hatsToRender =
-          (_selectedLineCode != null && _selectedLineCode!.isNotEmpty)
-              ? [_selectedLineCode!]
-              : sortedHats;
-
-      for (String lineCode in hatsToRender) {
-        Map<String, dynamic> hData =
-            Map<String, dynamic>.from(hatProgressMap[lineCode] ?? {});
-
-        List<LatLng> basePoints = _rawLineGeometries[lineCode] ?? [];
-
-        if (basePoints.isEmpty) {
-          if (_rawLineGeometries.isNotEmpty) {
-            basePoints = _rawLineGeometries.values.first;
-          } else {
-            basePoints = [
-              const LatLng(38.35, 35.35),
-              const LatLng(38.36, 35.36),
-            ];
-          }
-        }
-
-        totalPts += basePoints.length;
-
-        // Sarı/Turuncu Ana Çizgi (Alt Zemin)
-        newPolylines.add(Polyline(
-          polylineId: PolylineId('${lineCode}_base'),
-          points: basePoints,
-          color: const Color(0xFFFF9F1C),
-          width: 5,
-        ));
-
-        double startM = LineCalculator.parseKmToMeters(
-            hData["startKm"] ?? data["startKm"] ?? "0+000");
-
-        // 🔴 KAZI (Kırmızı)
-        double relKazi =
-            _parseRelMeters(hData["kaziKm"] ?? data["kaziKm"], startM);
-        if (relKazi > 0) {
-          List<LatLng> kaziPts =
-              LineCalculator.getSubPolyline(basePoints, 0.0, relKazi);
-          if (kaziPts.isNotEmpty) {
-            newPolylines.add(Polyline(
-              polylineId: PolylineId('${lineCode}_kazi'),
-              points: kaziPts,
-              color: const Color(0xFFE71D36),
-              width: 8,
-            ));
-          }
-        }
-
-        // 🟡 YATAKLAMA (Turuncu)
-        double relYataklama = _parseRelMeters(
-            hData["yataklamaKm"] ?? data["yataklamaKm"], startM);
-        if (relYataklama > 0) {
-          List<LatLng> yataklamaPts =
-              LineCalculator.getSubPolyline(basePoints, 0.0, relYataklama);
-          if (yataklamaPts.isNotEmpty) {
-            newPolylines.add(Polyline(
-              polylineId: PolylineId('${lineCode}_yataklama'),
-              points: yataklamaPts,
-              color: const Color(0xFFFF9F1C),
-              width: 7,
-            ));
-          }
-        }
-
-        // 🟢 MONTAJ (Turkuaz)
-        double relMontaj =
-            _parseRelMeters(hData["montajKm"] ?? data["montajKm"], startM);
-        if (relMontaj > 0) {
-          List<LatLng> montajPts =
-              LineCalculator.getSubPolyline(basePoints, 0.0, relMontaj);
-          if (montajPts.isNotEmpty) {
-            newPolylines.add(Polyline(
-              polylineId: PolylineId('${lineCode}_montaj'),
-              points: montajPts,
-              color: const Color(0xFF2EC4B6),
-              width: 6,
-            ));
-          }
-        }
-
-        // 🔵 KAPAMA (Mavi)
-        double relKapama =
-            _parseRelMeters(hData["kapamaKm"] ?? data["kapamaKm"], startM);
-        if (relKapama > 0) {
-          List<LatLng> kapamaPts =
-              LineCalculator.getSubPolyline(basePoints, 0.0, relKapama);
-          if (kapamaPts.isNotEmpty) {
-            newPolylines.add(Polyline(
-              polylineId: PolylineId('${lineCode}_kapama'),
-              points: kapamaPts,
-              color: const Color(0xFF20A4F3),
-              width: 5,
-            ));
-          }
-        }
-
-        List<dynamic> lineSanatList = sanatList.where((sy) {
-          String h = (sy["hatKodu"] ?? sy["hatAd"] ?? sy["hat"] ?? "")
-              .toString()
-              .trim();
-          return h.isEmpty || h == lineCode;
-        }).toList();
-
-        for (int i = 0; i < lineSanatList.length; i++) {
-          var yapi = lineSanatList[i];
-          double? lat = double.tryParse(yapi["lat"]?.toString() ?? '');
-          double? lng = double.tryParse(yapi["lng"]?.toString() ?? '');
-          LatLng? point;
-
-          if (lat != null && lng != null) {
-            point = LatLng(lat, lng);
-          } else {
-            double relYapiM = _parseRelMeters(yapi["km"], startM);
-            point = LineCalculator.getPointAtDistance(basePoints, relYapiM);
-          }
-
-          if (point != null) {
-            bool isCompleted =
-                yapi["status"] == "Tamamlandı" || yapi["durum"] == "Tamamlandı";
-            String type = yapi["type"] ?? yapi["tip"] ?? "Yapı";
-            String feature = yapi["feature"] ?? "";
-            String diameter = yapi["diameter"] ?? "";
-
-            BitmapDescriptor autoIcon =
-                await DynamicIconGenerator.createAutoIcon(
-              type: type,
-              feature: feature,
-              diameter: diameter,
-              isCompleted: isCompleted,
-            );
-
-            newMarkers.add(Marker(
-              markerId: MarkerId('${lineCode}_sanat_$i'),
-              position: point,
-              icon: autoIcon,
-              infoWindow: InfoWindow(
-                title: "${yapi["tip"] ?? type} ($lineCode)",
-                snippet:
-                    "Km: ${yapi["km"] ?? "0+000"} | Durum: ${yapi["durum"] ?? "Bekliyor"}",
-              ),
-            ));
-          }
-        }
-      }
-
-      if (mounted) {
-        setState(() {
-          _loadedLineCount = sortedHats.length;
-          _totalCoordinateCount = totalPts;
-          _availableLineCodes.clear();
-          _availableLineCodes.addAll(sortedHats);
-          _statusMessage =
-              "✅ $_loadedLineCount Hat • ${newMarkers.length} Yapı Çizildi";
-          _dinamikPolylineHatlari.clear();
-          _dinamikPolylineHatlari.addAll(newPolylines);
-          _sahaElemaniMarkers.clear();
-          _sahaElemaniMarkers.addAll(newMarkers);
-        });
-      }
-    });
   }
 
   @override
@@ -1069,7 +1173,7 @@ class _HaritaSayfasiState extends State<HaritaSayfasi> {
                         ],
                         onChanged: (val) {
                           setState(() => _selectedLineCode = val);
-                          _startCanliProjeDinleyicisi();
+                          _rebuildMapElements();
                         },
                       ),
                     ),

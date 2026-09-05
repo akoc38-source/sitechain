@@ -1,3 +1,5 @@
+// lib/screens/kml_yonetim_sayfasi.dart
+
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -16,7 +18,6 @@ class _KmlYonetimSayfasiState extends State<KmlYonetimSayfasi> {
 
   // 📂 DOSYA SEÇ VE YÜKLE (KML/KMZ DESTEKLİ)
   Future<void> _dosyaEkle() async {
-    // 🛠️ FilePicker.platform.pickFiles kullanılarak static erişim hatası çözüldü
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['kml', 'kmz'],
@@ -112,10 +113,10 @@ class _KmlYonetimSayfasiState extends State<KmlYonetimSayfasi> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey.shade100,
+      backgroundColor: const Color(0xFF121824),
       appBar: AppBar(
         title: const Text("KML / KMZ YÖNETİMİ"),
-        backgroundColor: Colors.black,
+        backgroundColor: const Color(0xFF1E2638),
         foregroundColor: Colors.white,
         centerTitle: true,
       ),
@@ -125,7 +126,7 @@ class _KmlYonetimSayfasiState extends State<KmlYonetimSayfasi> {
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(
-              child: CircularProgressIndicator(color: Colors.orange),
+              child: CircularProgressIndicator(color: Color(0xFFFF9F1C)),
             );
           }
 
@@ -152,26 +153,29 @@ class _KmlYonetimSayfasiState extends State<KmlYonetimSayfasi> {
               String url = data['url'] ?? "";
 
               return Card(
+                color: const Color(0xFF1E2638),
                 margin: const EdgeInsets.symmetric(horizontal: 15, vertical: 6),
                 elevation: 2,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
+                  side: const BorderSide(color: Colors.white12),
                 ),
                 child: ListTile(
                   leading: const CircleAvatar(
-                    backgroundColor: Colors.blueAccent,
-                    child: Icon(Icons.layers, color: Colors.white, size: 20),
+                    backgroundColor: Color(0xFFFF9F1C),
+                    child: Icon(Icons.layers, color: Colors.black, size: 20),
                   ),
                   title: Text(
                     data['ad'] ?? "İsimsiz Katman",
                     style: const TextStyle(
+                      color: Colors.white,
                       fontWeight: FontWeight.bold,
                       fontSize: 14,
                     ),
                   ),
                   subtitle: Text(
                     "Tip: ${data['tip']?.toString().toUpperCase() ?? 'KML'}",
-                    style: const TextStyle(fontSize: 12),
+                    style: const TextStyle(color: Colors.grey, fontSize: 12),
                   ),
                   trailing: IconButton(
                     icon: const Icon(
@@ -187,14 +191,15 @@ class _KmlYonetimSayfasiState extends State<KmlYonetimSayfasi> {
         },
       ),
       floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: Colors.orange.shade800,
+        backgroundColor: const Color(0xFFFF9F1C),
+        foregroundColor: Colors.black,
         onPressed: _yukleniyor ? null : _dosyaEkle,
         label: _yukleniyor
             ? const SizedBox(
                 width: 20,
                 height: 20,
                 child: CircularProgressIndicator(
-                  color: Colors.white,
+                  color: Colors.black,
                   strokeWidth: 2,
                 ),
               )
@@ -202,10 +207,9 @@ class _KmlYonetimSayfasiState extends State<KmlYonetimSayfasi> {
                 "YENİ KATMAN EKLE",
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
-                  color: Colors.white,
                 ),
               ),
-        icon: const Icon(Icons.cloud_upload, color: Colors.white),
+        icon: const Icon(Icons.cloud_upload),
       ),
     );
   }
